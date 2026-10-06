@@ -13,6 +13,7 @@ CURRENT_STAGE="startup"
 api_pid=""
 worker_pid=""
 web_pid=""
+log=""
 
 cleanup() {
   for pid in "$api_pid" "$worker_pid" "$web_pid"; do

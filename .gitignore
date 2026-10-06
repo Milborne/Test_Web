@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.next/
+.validation/
+examples/godot-demo.zip
+.env

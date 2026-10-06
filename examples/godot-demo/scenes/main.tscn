@@ -1,0 +1,20 @@
+[gd_scene load_steps=2 format=3]
+
+[sub_resource type="LabelSettings" id="LabelSettings_demo"]
+font_size = 32
+font_color = Color(0.64, 1, 0.31, 1)
+
+[node name="Main" type="Node2D"]
+
+[node name="Background" type="ColorRect" parent="."]
+offset_right = 640.0
+offset_bottom = 360.0
+color = Color(0.04, 0.05, 0.06, 1)
+
+[node name="Title" type="Label" parent="."]
+offset_left = 150.0
+offset_top = 140.0
+offset_right = 500.0
+offset_bottom = 190.0
+text = "GAME2WEB DEMO"
+label_settings = SubResource("LabelSettings_demo")

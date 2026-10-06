@@ -1,0 +1,25 @@
+{
+  "name": "game2web",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace apps/api\" \"npm run dev --workspace apps/web\"",
+    "build": "npm run build --workspace packages/shared && npm run build --workspace packages/providers && npm run build --workspace packages/storage && npm run build --workspace packages/deployment && npx prisma generate --schema packages/database/prisma/schema.prisma && npm run build --workspace apps/api && npm run build --workspace apps/worker && npm run build --workspace apps/web",
+    "test": "npm run build --workspace packages/shared && npm run build --workspace packages/providers && node --test packages/providers/dist/**/*.test.js",
+    "typecheck": "npm run build --workspace packages/shared && npm run build --workspace packages/providers && npm run build --workspace packages/storage && npm run build --workspace packages/deployment && npm run typecheck --workspace packages/database && npx prisma generate --schema packages/database/prisma/schema.prisma && npm run typecheck --workspace apps/api && npm run typecheck --workspace apps/worker && npm run typecheck --workspace apps/web",
+    "lint": "eslint --ignore-pattern dist --ignore-pattern .next .",
+    "e2e": "npm run prepare:e2e && playwright test",
+    "prepare:e2e": "bash scripts/prepare-e2e-fixture.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/adm-zip": "^0.5.5",
+    "adm-zip": "^0.5.16",
+    "concurrently": "^9.0.1",
+    "@typescript-eslint/eslint-plugin": "8.18.0",
+    "@typescript-eslint/parser": "8.18.0",
+    "@playwright/test": "1.49.1",
+    "eslint": "8.57.1",
+    "typescript": "5.6.3"
+  }
+}

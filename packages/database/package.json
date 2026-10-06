@@ -1,0 +1,1 @@
+{"name":"@game2web/database","version":"0.1.0","private":true,"scripts":{"typecheck":"prisma validate --schema prisma/schema.prisma"},"dependencies":{"@prisma/client":"^5.20.0"},"devDependencies":{"prisma":"^5.20.0"}}

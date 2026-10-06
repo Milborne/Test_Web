@@ -1,0 +1,84 @@
+name: Game2Web validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "22.11.0"
+  GODOT_VERSION: "4.3.0"
+  EMSCRIPTEN_VERSION: "3.1.74"
+
+jobs:
+  static:
+    name: Install, typecheck, lint, test and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Check environment
+        run: bash scripts/check-env.sh
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Unit tests
+        run: npm test
+      - name: Build workspaces
+        run: npm run build
+
+  runtime:
+    name: Infrastructure and real Godot validation
+    runs-on: ubuntu-latest
+    needs: static
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+      - name: Check environment
+        run: bash scripts/check-env.sh
+      - name: Check Docker versions
+        run: |
+          docker --version
+          docker compose version
+      - name: Start infrastructure
+        run: docker compose -f infra/docker-compose.yml up -d --wait
+      - name: Run database migrations
+        env:
+          DATABASE_URL: postgresql://game2web:game2web@localhost:5432/game2web
+        run: npx prisma db push --schema packages/database/prisma/schema.prisma
+      - name: Run MVP validation harness
+        env:
+          DATABASE_URL: postgresql://game2web:game2web@localhost:5432/game2web
+          REDIS_URL: redis://localhost:6379
+          S3_ENDPOINT: http://localhost:9000
+        run: bash scripts/validate-mvp.sh
+      - name: Collect Compose logs
+        if: always()
+        run: docker compose -f infra/docker-compose.yml logs --no-color > .validation/compose.log 2>&1 || true
+      - name: Upload validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: game2web-validation-logs
+          path: |
+            .validation/
+            /tmp/game2web-*.log
+          if-no-files-found: ignore
+      - name: Tear down infrastructure
+        if: always()
+        run: docker compose -f infra/docker-compose.yml down -v

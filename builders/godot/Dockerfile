@@ -1,4 +1,14 @@
 FROM flashlight13/godot:4.3
+USER root
+RUN apt-get update \
+  && apt-get install --yes --no-install-recommends ca-certificates curl libfontconfig1 unzip \
+  && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /opt/godot-templates \
+  && curl --fail --silent --show-error --location \
+    https://downloads.tuxfamily.org/godotengine/4.3/Godot_v4.3-stable_export_templates.tpz \
+    --output /tmp/export-templates.tpz \
+  && unzip -q /tmp/export-templates.tpz -d /opt/godot-templates \
+  && rm /tmp/export-templates.tpz
 RUN useradd --create-home --uid 1000 builder
 COPY build.sh /usr/local/bin/game2web-build
 RUN chmod +x /usr/local/bin/game2web-build

@@ -10,7 +10,9 @@ grep -q -- '--cap-drop=ALL' "$providers"
 grep -q -- 'no-new-privileges:true' "$providers"
 grep -q -- '--pids-limit' "$providers"
 grep -q -- '--read-only' "$providers"
-! grep -q -- '/var/run/docker.sock' "$providers" "$worker"
+if grep -q -- '/var/run/docker.sock' "$providers" "$worker"; then
+  exit 1
+fi
 grep -q 'segments.some((segment) => segment === "..")' apps/api/src/server.ts
 grep -q 'Source archive exceeds expansion safety limits' "$worker"
 grep -q '127.0.0.1:' "$compose"

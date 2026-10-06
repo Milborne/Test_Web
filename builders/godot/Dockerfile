@@ -4,4 +4,7 @@ COPY build.sh /usr/local/bin/game2web-build
 RUN chmod +x /usr/local/bin/game2web-build
 USER builder
 WORKDIR /src
+ENV XDG_DATA_HOME=/tmp/godot-data
+ENV XDG_CONFIG_HOME=/tmp/godot-config
+ENV XDG_CACHE_HOME=/tmp/godot-cache
 ENTRYPOINT ["/usr/local/bin/game2web-build"]

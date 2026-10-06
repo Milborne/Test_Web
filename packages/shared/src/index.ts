@@ -18,7 +18,11 @@ export interface BuildLimits {
   maxBuildMinutes: number;
   maxMemoryMb: number;
   maxCpus: number;
+  maxPids: number;
+  maxDiskMb: number;
   maxUploadMb: number;
+  maxSourceFiles: number;
+  maxExpandedSourceMb: number;
 }
 export interface BuildRequest { projectId: string; provider?: ProviderId; sourceStorageKey: string; }
 export interface BuildRecord {

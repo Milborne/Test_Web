@@ -11,7 +11,7 @@ import { getObject, putObject } from "@game2web/storage";
 
 const prisma = new PrismaClient();
 const queue = new Queue("game-builds", { connection: { url: process.env.REDIS_URL ?? "redis://localhost:6379" } });
-const limits = { maxBytes: Number(process.env.BUILD_MAX_UPLOAD_MB ?? 500) * 1024 * 1024, maxFiles: Number(process.env.BUILD_MAX_FILES ?? 10_000) };
+const limits = { maxBytes: Number(process.env.BUILD_MAX_UPLOAD_MB ?? 500) * 1024 * 1024, maxFiles: Number(process.env.BUILD_MAX_FILES ?? 10_000), maxExpandedBytes: Number(process.env.BUILD_MAX_EXPANDED_SOURCE_MB ?? 1024) * 1024 * 1024, maxCompressionRatio: Number(process.env.BUILD_MAX_COMPRESSION_RATIO ?? 100) };
 const app = Fastify({ logger: true });
 await app.register(cors, { origin: true });
 await app.register(multipart, { limits: { fileSize: limits.maxBytes, files: 1, fields: 4 } });
@@ -80,9 +80,16 @@ app.get<{ Params: { slug: string; "*": string } }>("/api/play/:slug/*", async (r
 
 function archiveEntries(buffer: Buffer): ProjectFile[] {
   const zip = new AdmZip(buffer);
-  return zip.getEntries().filter((entry) => !entry.isDirectory).map((entry) => {
+  const entries = zip.getEntries();
+  if (entries.length > limits.maxFiles) throw new Error("source archive exceeds file count limit");
+  let expandedBytes = 0;
+  return entries.filter((entry) => !entry.isDirectory).map((entry) => {
     const normalized = entry.entryName.replaceAll("\\", "/");
-    if (normalized.includes("..") || normalized.startsWith("/")) throw new Error(`Unsafe source path: ${entry.entryName}`);
+    const segments = normalized.split("/");
+    const mode = ((entry.header as { externalFileAttributes?: number }).externalFileAttributes ?? 0) >>> 16;
+    if (!normalized || normalized.startsWith("/") || normalized.includes("\0") || segments.some((segment) => segment === "..") || (mode & 0xf000) === 0xa000) throw new Error(`Unsafe source path: ${entry.entryName}`);
+    expandedBytes += entry.header.size;
+    if (expandedBytes > limits.maxExpandedBytes || (entry.header.compressedSize > 0 && entry.header.size / entry.header.compressedSize > limits.maxCompressionRatio)) throw new Error("source archive exceeds expansion safety limits");
     return { path: normalized, size: entry.header.size };
   });
 }

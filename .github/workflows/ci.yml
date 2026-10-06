@@ -36,6 +36,8 @@ jobs:
         run: npm test
       - name: Build workspaces
         run: npm run build
+      - name: Security tests
+        run: npm run security:test
 
   runtime:
     name: Infrastructure and real Godot validation

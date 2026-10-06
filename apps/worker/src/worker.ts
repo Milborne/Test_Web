@@ -11,7 +11,7 @@ import path from "node:path";
 
 const prisma = new PrismaClient();
 const connection = { url: process.env.REDIS_URL ?? "redis://localhost:6379" };
-const limits = { maxBuildMinutes: Number(process.env.BUILD_MAX_MINUTES ?? 10), maxMemoryMb: Number(process.env.BUILD_MAX_MEMORY_MB ?? 4096), maxCpus: Number(process.env.BUILD_MAX_CPUS ?? 2), maxUploadMb: Number(process.env.BUILD_MAX_UPLOAD_MB ?? 500) };
+const limits = { maxBuildMinutes: Number(process.env.BUILD_MAX_MINUTES ?? 10), maxMemoryMb: Number(process.env.BUILD_MAX_MEMORY_MB ?? 4096), maxCpus: Number(process.env.BUILD_MAX_CPUS ?? 2), maxPids: Number(process.env.BUILD_MAX_PIDS ?? 256), maxDiskMb: Number(process.env.BUILD_MAX_DISK_MB ?? 2048), maxUploadMb: Number(process.env.BUILD_MAX_UPLOAD_MB ?? 500), maxSourceFiles: Number(process.env.BUILD_MAX_FILES ?? 10_000), maxExpandedSourceMb: Number(process.env.BUILD_MAX_EXPANDED_SOURCE_MB ?? 1024) };
 const deploymentProvider = new LocalStaticDeploymentProvider();
 
 new Worker("game-builds", async (job) => {
@@ -33,9 +33,16 @@ new Worker("game-builds", async (job) => {
     await update(buildId, "PREPARING", "Downloading source archive from persistent storage");
     const source = await getObject(String(job.data.sourceStorageKey));
     const zip = new AdmZip(source.body);
-    for (const entry of zip.getEntries()) {
+    const entries = zip.getEntries();
+    if (entries.length > limits.maxSourceFiles) throw new Error("Source archive exceeds file count limit");
+    let expandedBytes = 0;
+    for (const entry of entries) {
       const safe = entry.entryName.replaceAll("\\", "/");
-      if (safe.includes("..") || safe.startsWith("/")) throw new Error(`Unsafe source path: ${entry.entryName}`);
+      const segments = safe.split("/");
+      const mode = ((entry.header as { externalFileAttributes?: number }).externalFileAttributes ?? 0) >>> 16;
+      if (!safe || safe.startsWith("/") || safe.includes("\0") || segments.some((segment) => segment === "..") || (mode & 0xf000) === 0xa000) throw new Error(`Unsafe source path: ${entry.entryName}`);
+      expandedBytes += entry.header.size;
+      if (expandedBytes > limits.maxExpandedSourceMb * 1024 * 1024 || (entry.header.compressedSize > 0 && entry.header.size / entry.header.compressedSize > 100)) throw new Error("Source archive exceeds expansion safety limits");
       const target = path.resolve(sourceDirectory, safe);
       if (!target.startsWith(`${path.resolve(sourceDirectory)}${path.sep}`)) throw new Error(`Source path escapes workspace: ${safe}`);
       await mkdir(path.dirname(target), { recursive: true });
@@ -52,6 +59,9 @@ new Worker("game-builds", async (job) => {
     await update(buildId, "PACKAGING", "Collecting and validating generated artifacts");
     const paths = await provider.collectArtifacts(outputDirectory);
     const artifacts = await validateArtifacts(outputDirectory, paths);
+    if (artifacts.reduce((total, artifact) => total + artifact.size, 0) > limits.maxDiskMb * 1024 * 1024) {
+      throw new Error("Build artifacts exceed configured disk limit");
+    }
     if (providerId === "godot" && (!artifacts.some((artifact) => artifact.path.endsWith(".wasm")) || !artifacts.some((artifact) => artifact.path.endsWith(".js")))) {
       throw new Error("Godot Web export is missing required WASM or JavaScript runtime artifacts");
     }

@@ -21,7 +21,7 @@ services:
       timeout: 3s
       retries: 20
   minio:
-    image: quay.io/minio/minio:latest
+    image: alpine/minio:latest
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin

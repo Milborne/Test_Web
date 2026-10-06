@@ -35,10 +35,14 @@ new Worker("game-builds", async (job) => {
     const zip = new AdmZip(source.body);
     for (const entry of zip.getEntries()) {
       const safe = entry.entryName.replaceAll("\\", "/");
-      if (entry.isDirectory || safe.includes("..") || safe.startsWith("/")) throw new Error(`Unsafe source path: ${entry.entryName}`);
+      if (safe.includes("..") || safe.startsWith("/")) throw new Error(`Unsafe source path: ${entry.entryName}`);
       const target = path.resolve(sourceDirectory, safe);
       if (!target.startsWith(`${path.resolve(sourceDirectory)}${path.sep}`)) throw new Error(`Source path escapes workspace: ${safe}`);
       await mkdir(path.dirname(target), { recursive: true });
+      if (entry.isDirectory) {
+        await mkdir(target, { recursive: true });
+        continue;
+      }
       await writeFile(target, entry.getData(), { mode: 0o644 });
     }
     await update(buildId, "VALIDATING", "Validating deterministic provider compatibility");

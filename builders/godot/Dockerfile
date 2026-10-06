@@ -5,7 +5,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /opt/godot-templates \
   && curl --fail --silent --show-error --location \
-    https://downloads.tuxfamily.org/godotengine/4.3/Godot_v4.3-stable_export_templates.tpz \
+    https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz \
     --output /tmp/export-templates.tpz \
   && unzip -q /tmp/export-templates.tpz -d /opt/godot-templates \
   && rm /tmp/export-templates.tpz

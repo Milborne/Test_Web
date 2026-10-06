@@ -1,10 +1,115 @@
-generator client { provider = "prisma-client-js" }
-datasource db { provider = "postgresql" url = env("DATABASE_URL") }
-enum BuildStatus { QUEUED PREPARING VALIDATING BUILDING PACKAGING UPLOADING READY FAILED CANCELLED }
-model User { id String @id @default(cuid()) email String @unique passwordHash String createdAt DateTime @default(now()) updatedAt DateTime @updatedAt projects Project[] }
-model Project { id String @id @default(cuid()) slug String @unique name String description String? userId String user User @relation(fields: [userId], references: [id]) files ProjectFile[] builds Build[] deployments Deployment[] createdAt DateTime @default(now()) updatedAt DateTime @updatedAt @@index([userId]) }
-model ProjectFile { id String @id @default(cuid()) projectId String project Project @relation(fields: [projectId], references: [id], onDelete: Cascade) path String originalFilename String size BigInt storageKey String checksum String createdAt DateTime @default(now()) @@index([projectId]) }
-model Build { id String @id @default(cuid()) projectId String project Project @relation(fields: [projectId], references: [id], onDelete: Cascade) provider String? status BuildStatus @default(QUEUED) error String? durationMs Int? logs BuildLog[] artifacts Artifact[] deployment Deployment? createdAt DateTime @default(now()) updatedAt DateTime @updatedAt @@index([projectId, createdAt]) }
-model BuildLog { id String @id @default(cuid()) buildId String build Build @relation(fields: [buildId], references: [id], onDelete: Cascade) message String createdAt DateTime @default(now()) @@index([buildId, createdAt]) }
-model Artifact { id String @id @default(cuid()) buildId String build Build @relation(fields: [buildId], references: [id], onDelete: Cascade) path String size BigInt storageKey String mimeType String checksum String createdAt DateTime @default(now()) @@index([buildId]) }
-model Deployment { id String @id @default(cuid()) projectId String project Project @relation(fields: [projectId], references: [id], onDelete: Cascade) buildId String @unique build Build @relation(fields: [buildId], references: [id]) slug String @unique version Int publishedPrefix String createdAt DateTime @default(now()) updatedAt DateTime @updatedAt @@index([projectId, createdAt]) }
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum BuildStatus {
+  QUEUED
+  PREPARING
+  VALIDATING
+  BUILDING
+  PACKAGING
+  UPLOADING
+  READY
+  FAILED
+  CANCELLED
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  projects     Project[]
+}
+
+model Project {
+  id          String       @id @default(cuid())
+  slug        String       @unique
+  name        String
+  description String?
+  userId      String
+  user        User         @relation(fields: [userId], references: [id])
+  files       ProjectFile[]
+  builds      Build[]
+  deployments Deployment[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([userId])
+}
+
+model ProjectFile {
+  id               String   @id @default(cuid())
+  projectId        String
+  project          Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  path             String
+  originalFilename String
+  size             BigInt
+  storageKey       String
+  checksum         String
+  createdAt        DateTime @default(now())
+
+  @@index([projectId])
+}
+
+model Build {
+  id          String       @id @default(cuid())
+  projectId   String
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  provider    String?
+  status      BuildStatus  @default(QUEUED)
+  error       String?
+  durationMs  Int?
+  logs        BuildLog[]
+  artifacts   Artifact[]
+  deployment  Deployment?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([projectId, createdAt])
+}
+
+model BuildLog {
+  id        String   @id @default(cuid())
+  buildId   String
+  build     Build    @relation(fields: [buildId], references: [id], onDelete: Cascade)
+  message   String
+  createdAt DateTime @default(now())
+
+  @@index([buildId, createdAt])
+}
+
+model Artifact {
+  id        String   @id @default(cuid())
+  buildId   String
+  build     Build    @relation(fields: [buildId], references: [id], onDelete: Cascade)
+  path      String
+  size      BigInt
+  storageKey String
+  mimeType  String
+  checksum  String
+  createdAt DateTime @default(now())
+
+  @@index([buildId])
+}
+
+model Deployment {
+  id              String   @id @default(cuid())
+  projectId       String
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  buildId         String   @unique
+  build           Build    @relation(fields: [buildId], references: [id])
+  slug            String   @unique
+  version         Int
+  publishedPrefix String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([projectId, createdAt])
+}

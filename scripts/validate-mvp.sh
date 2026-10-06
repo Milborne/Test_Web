@@ -20,7 +20,7 @@ cleanup() {
   done
 }
 trap cleanup EXIT
-trap 'printf "\nFINAL RESULT:\nNOT VALIDATED\nFailed stage: %s\n" "${CURRENT_STAGE:-unknown}" | tee -a "$REPORT"' ERR
+trap 'printf "\nFINAL RESULT:\nNOT VALIDATED\nFailed stage: %s\n" "${CURRENT_STAGE:-unknown}" | tee -a "$REPORT"; for log in "$REPORT_DIR"/*.log; do [ -f "$log" ] && { printf "\n--- %s ---\n" "$log"; cat "$log"; }; done' ERR
 
 record() { printf '%-24s PASS\n' "$1" | tee -a "$REPORT"; }
 run_stage() { CURRENT_STAGE="$1"; shift; "$@"; record "$CURRENT_STAGE"; }
@@ -59,7 +59,7 @@ curl --fail --silent http://127.0.0.1:3000 >/dev/null
 record "API and player"
 
 CURRENT_STAGE="Browser E2E"
-npm run e2e >"$REPORT_DIR/playwright.log" 2>&1
+npm run e2e 2>&1 | tee "$REPORT_DIR/playwright.log"
 record "Upload"
 record "Provider detection"
 record "Compatibility"

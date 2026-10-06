@@ -15,7 +15,12 @@ test("Godot upload, build, deployment and player", async ({ page, request }) => 
   const buildResponse = await request.post(`${api}/api/projects/${created.project.id}/builds`, { data: {} });
   expect(buildResponse.status()).toBe(202);
   const build = await buildResponse.json();
-  await expect.poll(async () => (await (await request.get(`${api}/api/builds/${build.id}`)).json()).status, { timeout: 150_000 }).toBe("READY");
+  await expect.poll(async () => {
+    const statusResponse = await request.get(`${api}/api/builds/${build.id}`);
+    const status = await statusResponse.json();
+    if (status.status === "FAILED") throw new Error(status.error ?? "Build failed without an error message");
+    return status.status;
+  }, { timeout: 150_000 }).toBe("READY");
   const finalBuild = await (await request.get(`${api}/api/builds/${build.id}`)).json();
   const indexArtifact = finalBuild.artifacts.find((artifact: { path: string }) => artifact.path === "index.html");
   expect(indexArtifact).toBeTruthy();

@@ -25,7 +25,10 @@ app.addHook("onSend", async (_request, reply) => {
   reply.header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   reply.header("Content-Security-Policy", `default-src 'self'; frame-src 'self' ${playerOrigin}`);
 });
-await app.register(cors, { origin: appOrigin, credentials: true });
+await app.register(cors, {
+  origin: (origin, callback) => callback(null, origin === appOrigin ? appOrigin : false),
+  credentials: true
+});
 await app.register(multipart, { limits: { fileSize: limits.maxBytes, files: 1, fields: 4 } });
 
 app.get("/health", async () => ({ status: "ok", service: "game2web-api", ai: false }));

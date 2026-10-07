@@ -58,6 +58,7 @@ done
 curl --fail --silent http://127.0.0.1:4000/health >/dev/null
 curl --fail --silent http://127.0.0.1:3000 >/dev/null
 record "API and player"
+run_stage "M7 infrastructure checks" env REPORT_DIR="$REPORT_DIR" "$ROOT/scripts/validate-m7.sh"
 
 CURRENT_STAGE="Browser E2E"
 npm run e2e 2>&1 | tee "$REPORT_DIR/playwright.log"
@@ -74,5 +75,5 @@ record "Failure E2E"
 cat <<'EOF' | tee -a "$REPORT"
 
 FINAL RESULT:
-MVP END-TO-END VALIDATED
+PRIVATE BETA READY
 EOF

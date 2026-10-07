@@ -4,7 +4,7 @@ import AdmZip from "adm-zip";
 import { providers, validateArtifacts } from "@game2web/providers";
 import type { BuildContext, ProviderId } from "@game2web/shared";
 import { getObject, putObject } from "@game2web/storage";
-import { LocalStaticDeploymentProvider } from "@game2web/deployment";
+import { createDeploymentProvider } from "@game2web/deployment";
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -12,7 +12,7 @@ import path from "node:path";
 const prisma = new PrismaClient();
 const connection = { url: process.env.REDIS_URL ?? "redis://localhost:6379" };
 const limits = { maxBuildMinutes: Number(process.env.BUILD_MAX_MINUTES ?? 10), maxMemoryMb: Number(process.env.BUILD_MAX_MEMORY_MB ?? 4096), maxCpus: Number(process.env.BUILD_MAX_CPUS ?? 2), maxPids: Number(process.env.BUILD_MAX_PIDS ?? 256), maxDiskMb: Number(process.env.BUILD_MAX_DISK_MB ?? 2048), maxUploadMb: Number(process.env.BUILD_MAX_UPLOAD_MB ?? 500), maxSourceFiles: Number(process.env.BUILD_MAX_FILES ?? 10_000), maxExpandedSourceMb: Number(process.env.BUILD_MAX_EXPANDED_SOURCE_MB ?? 1024) };
-const deploymentProvider = new LocalStaticDeploymentProvider();
+const deploymentProvider = createDeploymentProvider();
 
 new Worker("game-builds", async (job) => {
   const started = Date.now();
@@ -20,7 +20,16 @@ new Worker("game-builds", async (job) => {
   const projectId = String(job.data.projectId);
   const providerId = job.data.provider as ProviderId;
   const provider = providers[providerId];
-  if (!provider) throw new Error(`Unknown provider: ${providerId}`);
+  if (!provider) {
+    await prisma.build.update({ where: { id: buildId }, data: { status: "FAILED", error: `Unknown provider: ${providerId}` } });
+    throw new Error(`Unknown provider: ${providerId}`);
+  }
+  const buildRecord = await prisma.build.findFirst({ where: { id: buildId, projectId }, include: { project: { include: { files: true } } } });
+  if (!buildRecord || buildRecord.project.files.every((file) => file.storageKey !== String(job.data.sourceStorageKey))) {
+    const error = "Build ownership or source binding validation failed";
+    await prisma.build.update({ where: { id: buildId }, data: { status: "FAILED", error } });
+    throw new Error(error);
+  }
   const workspace = await mkdtemp(path.join(os.tmpdir(), "game2web-"));
   const sourceDirectory = path.join(workspace, "source");
   const outputDirectory = path.join(workspace, "output");
@@ -74,7 +83,7 @@ new Worker("game-builds", async (job) => {
       await prisma.artifact.create({ data: { buildId, path: artifact.path.replaceAll("\\", "/"), size: stored.size, storageKey: stored.key, mimeType: mime(artifact.path), checksum: stored.checksum } });
     }
     await update(buildId, "UPLOADING", "Artifacts uploaded to MinIO");
-    const deployment = await prisma.deployment.create({ data: { projectId, buildId, slug: project.slug, version: 1, publishedPrefix: prefix } });
+    const deployment = await prisma.deployment.create({ data: { projectId, buildId, slug: project.slug, version: 1, published: true, publishedPrefix: prefix } });
     await prisma.build.update({ where: { id: buildId }, data: { status: "READY", durationMs: Date.now() - started } });
     await addLog(buildId, `Deployment ready at /play/${deployment.slug}`);
     return { status: "READY", deploymentId: deployment.id };
@@ -86,7 +95,7 @@ new Worker("game-builds", async (job) => {
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
-}, { connection });
+}, { connection, concurrency: Number(process.env.MAX_CONCURRENT_BUILDS ?? 2) });
 
 async function update(buildId: string, status: "PREPARING" | "VALIDATING" | "BUILDING" | "PACKAGING" | "UPLOADING", message: string) {
   await prisma.build.update({ where: { id: buildId }, data: { status } });

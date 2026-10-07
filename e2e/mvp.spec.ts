@@ -4,6 +4,8 @@ import { createHash } from "node:crypto";
 import AdmZip from "adm-zip";
 
 const api = "http://127.0.0.1:4000";
+const appOrigin = process.env.APP_ORIGIN ?? "http://localhost:3000";
+const playerOrigin = process.env.PLAYER_ORIGIN ?? "http://localhost:4000";
 
 test("Godot upload, build, deployment and player", async ({ page, request }) => {
   const email = `e2e-${Date.now()}@example.test`;
@@ -71,4 +73,59 @@ test("private project access is isolated between users", async ({ playwright }) 
   expect((await userB.post(`/api/projects/${created.project.id}/builds`, { headers: { "x-csrf-token": csrfB }, data: {} })).status()).toBe(404);
   await userA.dispose();
   await userB.dispose();
+});
+
+test("M7 origin and public access boundaries are enforced", async ({ request }) => {
+  const allowed = await request.get(`${api}/api/auth/me`, { headers: { Origin: appOrigin } });
+  expect(allowed.status()).toBe(401);
+  expect(allowed.headers()["access-control-allow-origin"]).toBe(appOrigin);
+  expect(allowed.headers()["access-control-allow-credentials"]).toBe("true");
+
+  const player = await request.get(`${api}/api/auth/me`, { headers: { Origin: playerOrigin } });
+  expect(player.status()).toBe(401);
+  expect(player.headers()["access-control-allow-origin"]).toBeUndefined();
+
+  const unknown = await request.get(`${api}/api/auth/me`, { headers: { Origin: "https://unknown.example.test" } });
+  expect(unknown.status()).toBe(401);
+  expect(unknown.headers()["access-control-allow-origin"]).toBeUndefined();
+
+  const registration = await request.post(`${api}/api/auth/register`, {
+    data: { email: `cookie-${Date.now()}@example.test`, password: "correct horse battery" }
+  });
+  expect(registration.ok()).toBeTruthy();
+  const setCookie = registration.headers()["set-cookie"];
+  expect(setCookie).not.toMatch(/Domain=/i);
+  expect(setCookie).toMatch(/game2web_session=/);
+  expect(setCookie).toMatch(/game2web_csrf=/);
+
+  const privateResponse = await request.get(`${api}/api/projects`, { headers: { Origin: playerOrigin } });
+  expect(privateResponse.status()).toBe(401);
+  expect((await request.get(`${api}/api/play/m7-not-published/`)).status()).toBe(404);
+});
+
+test("M7 build admission limits active builds per user", async ({ request }) => {
+  test.slow();
+  const auth = await request.post(`${api}/api/auth/register`, {
+    data: { email: `concurrency-${Date.now()}@example.test`, password: "correct horse battery" }
+  });
+  expect(auth.ok()).toBeTruthy();
+  const csrf = auth.headers()["set-cookie"].match(/game2web_csrf=([^;]+)/)?.[1] ?? "";
+  const archive = await readFile("examples/godot-demo.zip");
+  const projectResponse = await request.post(`${api}/api/projects`, {
+    headers: { "x-csrf-token": csrf },
+    multipart: { name: "concurrency", archive: { name: "godot-demo.zip", mimeType: "application/zip", buffer: archive } }
+  });
+  expect(projectResponse.ok()).toBeTruthy();
+  const project = await projectResponse.json();
+  const buildRequests = await Promise.all([
+    request.post(`${api}/api/projects/${project.project.id}/builds`, { headers: { "x-csrf-token": csrf }, data: {} }),
+    request.post(`${api}/api/projects/${project.project.id}/builds`, { headers: { "x-csrf-token": csrf }, data: {} }),
+    request.post(`${api}/api/projects/${project.project.id}/builds`, { headers: { "x-csrf-token": csrf }, data: {} })
+  ]);
+  expect(buildRequests.filter((response) => response.status() === 202)).toHaveLength(2);
+  expect(buildRequests.filter((response) => response.status() === 429)).toHaveLength(1);
+  for (const response of buildRequests.filter((candidate) => candidate.status() === 202)) {
+    const build = await response.json();
+    await expect.poll(async () => (await request.get(`${api}/api/builds/${build.id}`)).json().then((value) => value.status), { timeout: 180_000 }).toMatch(/READY|FAILED/);
+  }
 });

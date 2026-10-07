@@ -14,15 +14,7 @@ export async function assertBucket() {
   await s3.send(new HeadBucketCommand({ Bucket: bucket }));
 }
 
-export async function putObject(key: string, body: Buffer | Readable, contentType: string) {
-  await ensureBucket();
-  const buffer = Buffer.isBuffer(body) ? body : await streamToBuffer(body);
-  const checksum = createHash("sha256").update(buffer).digest("hex");
-  await s3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: buffer, ContentType: contentType, Metadata: { sha256: checksum } }));
-  return { key, size: buffer.length, checksum };
-}
-
-async function ensureBucket() {
+export async function ensureBucket() {
   try {
     await s3.send(new HeadBucketCommand({ Bucket: bucket }));
   } catch {
@@ -32,6 +24,14 @@ async function ensureBucket() {
       if (!(error instanceof Error) || !error.message.includes("BucketAlready")) throw error;
     }
   }
+}
+
+export async function putObject(key: string, body: Buffer | Readable, contentType: string) {
+  await ensureBucket();
+  const buffer = Buffer.isBuffer(body) ? body : await streamToBuffer(body);
+  const checksum = createHash("sha256").update(buffer).digest("hex");
+  await s3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: buffer, ContentType: contentType, Metadata: { sha256: checksum } }));
+  return { key, size: buffer.length, checksum };
 }
 
 export async function getObject(key: string) {

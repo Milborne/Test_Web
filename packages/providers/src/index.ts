@@ -33,7 +33,15 @@ export class EmscriptenSdlProvider implements BuildProvider {
   async validate(files: ProjectFile[]) { return this.detect(files); }
   async build(context: BuildContext) {
     context.log("Starting isolated Emscripten builder");
-    await execFileAsync("docker", ["run", "--rm", "--network=none", "--cap-drop=ALL", "--security-opt", "no-new-privileges:true", "--pids-limit", String(context.limits.maxPids), "--cpus", String(context.limits.maxCpus), "--memory", `${context.limits.maxMemoryMb}m`, "--user", "1000:1000", "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=512m", "-v", `${context.sourceDirectory}:/src:ro`, "-v", `${context.outputDirectory}:/out`, process.env.EMSCRIPTEN_BUILDER_IMAGE ?? "game2web/emscripten-builder:3.1.74"], { timeout: context.limits.maxBuildMinutes * 60_000 });
+    try {
+      const result = await execFileAsync("docker", ["run", "--rm", "--network=none", "--cap-drop=ALL", "--security-opt", "no-new-privileges:true", "--pids-limit", String(context.limits.maxPids), "--cpus", String(context.limits.maxCpus), "--memory", `${context.limits.maxMemoryMb}m`, "--user", "1000:1000", "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=512m", "-v", `${context.sourceDirectory}:/src:ro`, "-v", `${context.outputDirectory}:/out`, process.env.EMSCRIPTEN_BUILDER_IMAGE ?? "game2web/emscripten-builder:3.1.74"], { timeout: context.limits.maxBuildMinutes * 60_000 });
+      context.log(result.stdout);
+    } catch (error) {
+      const output = error as { stdout?: string; stderr?: string };
+      context.log(output.stdout ?? "");
+      context.log(output.stderr ?? "");
+      throw error;
+    }
   }
   async collectArtifacts(outputDirectory: string) { return listArtifacts(outputDirectory); }
 }

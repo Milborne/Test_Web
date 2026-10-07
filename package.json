@@ -11,7 +11,8 @@
     "security:test": "bash scripts/security-check.sh",
     "image-policy": "bash scripts/check-image-policy.sh",
     "e2e": "npm run prepare:e2e && playwright test",
-    "prepare:e2e": "bash scripts/prepare-e2e-fixture.sh"
+    "prepare:e2e": "bash scripts/prepare-e2e-fixture.sh",
+    "compatibility:lab": "bash scripts/compatibility/compatibility-lab.sh"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

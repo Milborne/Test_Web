@@ -1,0 +1,47 @@
+name: Game2Web Compatibility Lab
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compatibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      COMPATIBILITY_LAB: "true"
+      DATABASE_URL: postgresql://game2web:game2web@localhost:5432/game2web
+      REDIS_URL: redis://localhost:6379
+      S3_ENDPOINT: http://localhost:9000
+      APP_ORIGIN: http://127.0.0.1:3000
+      PLAYER_ORIGIN: http://127.0.0.1:4000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.11.0
+          cache: npm
+      - run: npm install --no-audit --no-fund
+      - run: npm run typecheck
+      - run: docker compose -f infra/docker-compose.yml up -d
+      - run: docker build --tag game2web/godot-builder:4.3.0 builders/godot
+      - run: npx prisma db push --schema packages/database/prisma/schema.prisma
+      - name: Start API and worker
+        run: |
+          npm run dev --workspace apps/api > api.log 2>&1 &
+          npm run dev --workspace apps/worker > worker.log 2>&1 &
+          for i in $(seq 1 60); do curl --fail --silent http://127.0.0.1:4000/health && break || sleep 1; done
+      - run: npm run compatibility:lab
+      - if: always()
+        run: docker compose -f infra/docker-compose.yml down -v
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compatibility-lab-report
+          path: |
+            tests/compatibility/reports
+            api.log
+            worker.log
+          if-no-files-found: warn

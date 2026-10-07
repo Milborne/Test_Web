@@ -41,6 +41,9 @@ void frame() {
 int main() {
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) != 0) return 1;
   if (SDL_CreateWindowAndRenderer(640, 360, SDL_WINDOW_SHOWN, &window, &renderer) != 0) return 1;
+  EM_ASM({
+    document.getElementById("game-ready").hidden = false;
+  });
   emscripten_set_main_loop(frame, 0, 1);
   return 0;
 }

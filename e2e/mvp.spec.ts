@@ -75,7 +75,8 @@ test("private project access is isolated between users", async ({ playwright }) 
   await userB.dispose();
 });
 
-test("M7 origin and public access boundaries are enforced", async ({ request }) => {
+test("M7 origin and public access boundaries are enforced", async ({ playwright }) => {
+  const request = await playwright.request.newContext();
   const allowed = await request.get(`${api}/api/auth/me`, { headers: { Origin: appOrigin } });
   expect(allowed.status()).toBe(401);
   expect(allowed.headers()["access-control-allow-origin"]).toBe(appOrigin);
@@ -101,6 +102,7 @@ test("M7 origin and public access boundaries are enforced", async ({ request }) 
   const privateResponse = await request.get(`${api}/api/projects`, { headers: { Origin: playerOrigin } });
   expect(privateResponse.status()).toBe(401);
   expect((await request.get(`${api}/api/play/m7-not-published/`)).status()).toBe(404);
+  await request.dispose();
 });
 
 test("M7 build admission limits active builds per user", async ({ request }) => {

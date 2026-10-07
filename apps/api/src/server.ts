@@ -23,7 +23,11 @@ app.addHook("onSend", async (_request, reply) => {
   reply.header("X-Content-Type-Options", "nosniff");
   reply.header("Referrer-Policy", "strict-origin-when-cross-origin");
   reply.header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  reply.header("Content-Security-Policy", `default-src 'self'; frame-src 'self' ${playerOrigin}`);
+  if (_request.url.startsWith("/api/play/")) {
+    reply.header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; frame-ancestors " + appOrigin);
+  } else {
+    reply.header("Content-Security-Policy", `default-src 'self'; frame-src 'self' ${playerOrigin}`);
+  }
 });
 await app.register(cors, {
   origin: (origin, callback) => callback(null, origin === appOrigin ? appOrigin : false),

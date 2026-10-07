@@ -55,3 +55,20 @@ test("invalid archive is rejected before queueing", async ({ request }) => {
   const build = await request.post(`${api}/api/projects/${created.project.id}/builds`, { headers, data: {} });
   expect(build.status()).toBe(422);
 });
+
+test("private project access is isolated between users", async ({ playwright }) => {
+  const userA = await playwright.request.newContext({ baseURL: api });
+  const userB = await playwright.request.newContext({ baseURL: api });
+  const authA = await userA.post("/api/auth/register", { data: { email: `a-${Date.now()}@example.test`, password: "correct horse battery" } });
+  const csrfA = authA.headers()["set-cookie"].match(/game2web_csrf=([^;]+)/)?.[1] ?? "";
+  const zip = new AdmZip();
+  zip.addFile("README.txt", Buffer.from("private"));
+  const project = await userA.post("/api/projects", { headers: { "x-csrf-token": csrfA }, multipart: { name: "private", archive: { name: "private.zip", mimeType: "application/zip", buffer: zip.toBuffer() } } });
+  const created = await project.json();
+  const authB = await userB.post("/api/auth/register", { data: { email: `b-${Date.now()}@example.test`, password: "correct horse battery" } });
+  const csrfB = authB.headers()["set-cookie"].match(/game2web_csrf=([^;]+)/)?.[1] ?? "";
+  expect(await (await userB.get("/api/projects")).json()).toEqual([]);
+  expect((await userB.post(`/api/projects/${created.project.id}/builds`, { headers: { "x-csrf-token": csrfB }, data: {} })).status()).toBe(404);
+  await userA.dispose();
+  await userB.dispose();
+});

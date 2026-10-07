@@ -58,6 +58,7 @@ done
 curl --fail --silent http://127.0.0.1:4000/health >/dev/null
 curl --fail --silent http://127.0.0.1:3000 >/dev/null
 record "API and player"
+run_stage "E2E fixture" npm run prepare:e2e
 run_stage "M7 infrastructure checks" env REPORT_DIR="$REPORT_DIR" "$ROOT/scripts/validate-m7.sh"
 
 CURRENT_STAGE="Browser E2E"

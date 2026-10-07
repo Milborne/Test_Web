@@ -46,6 +46,11 @@ test("Godot upload, build, deployment and player", async ({ page, request }) => 
 
 test("SDL upload, Emscripten build, deployment and player", async ({ page, playwright }) => {
   const request = await playwright.request.newContext();
+  const runtimeErrors: string[] = [];
+  page.on("pageerror", (error) => runtimeErrors.push(`pageerror: ${error.message}`));
+  page.on("console", (message) => {
+    if (message.type() === "error") runtimeErrors.push(`console: ${message.text()}`);
+  });
   const auth = await request.post(`${api}/api/auth/register`, { data: { email: `sdl-${Date.now()}@example.test`, password: "correct horse battery" } });
   expect(auth.ok()).toBeTruthy();
   const csrf = auth.headers()["set-cookie"].match(/game2web_csrf=([^;]+)/)?.[1] ?? "";
@@ -70,7 +75,11 @@ test("SDL upload, Emscripten build, deployment and player", async ({ page, playw
   await page.goto(`/play/${created.project.slug}`);
   const frame = page.frameLocator("iframe");
   await expect(frame.locator("canvas")).toBeVisible({ timeout: 30_000 });
-  await expect(frame.locator("#game-ready")).toBeVisible({ timeout: 30_000 });
+  try {
+    await expect(frame.locator("#game-ready")).toBeVisible({ timeout: 30_000 });
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\n${runtimeErrors.join("\n")}`);
+  }
   await request.dispose();
 });
 

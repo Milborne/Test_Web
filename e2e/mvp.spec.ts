@@ -99,9 +99,11 @@ test("M7 origin and public access boundaries are enforced", async ({ playwright 
   expect(setCookie).toMatch(/game2web_session=/);
   expect(setCookie).toMatch(/game2web_csrf=/);
 
-  const privateResponse = await request.get(`${api}/api/projects`, { headers: { Origin: playerOrigin } });
+  const anonymous = await playwright.request.newContext();
+  const privateResponse = await anonymous.get(`${api}/api/projects`, { headers: { Origin: playerOrigin } });
   expect(privateResponse.status()).toBe(401);
-  expect((await request.get(`${api}/api/play/m7-not-published/`)).status()).toBe(404);
+  expect((await anonymous.get(`${api}/api/play/m7-not-published/`)).status()).toBe(404);
+  await anonymous.dispose();
   await request.dispose();
 });
 

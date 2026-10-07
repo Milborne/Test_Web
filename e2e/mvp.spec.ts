@@ -6,13 +6,18 @@ import AdmZip from "adm-zip";
 const api = "http://127.0.0.1:4000";
 
 test("Godot upload, build, deployment and player", async ({ page, request }) => {
+  const email = `e2e-${Date.now()}@example.test`;
+  const auth = await request.post(`${api}/api/auth/register`, { data: { email, password: "correct horse battery" } });
+  expect(auth.ok()).toBeTruthy();
+  const csrf = auth.headers()["set-cookie"].match(/game2web_csrf=([^;]+)/)?.[1] ?? "";
+  const headers = { "x-csrf-token": csrf };
   const archive = await readFile("examples/godot-demo.zip");
-  const projectResponse = await request.post(`${api}/api/projects`, { multipart: { name: "godot-demo", archive: { name: "godot-demo.zip", mimeType: "application/zip", buffer: archive } } });
+  const projectResponse = await request.post(`${api}/api/projects`, { headers, multipart: { name: "godot-demo", archive: { name: "godot-demo.zip", mimeType: "application/zip", buffer: archive } } });
   expect(projectResponse.ok()).toBeTruthy();
   const created = await projectResponse.json();
   expect(created.compatibility.provider).toBe("godot");
   expect(created.compatibility.compatible).toBeTruthy();
-  const buildResponse = await request.post(`${api}/api/projects/${created.project.id}/builds`, { data: {} });
+  const buildResponse = await request.post(`${api}/api/projects/${created.project.id}/builds`, { headers, data: {} });
   expect(buildResponse.status()).toBe(202);
   const build = await buildResponse.json();
   await expect.poll(async () => {
@@ -38,12 +43,15 @@ test("Godot upload, build, deployment and player", async ({ page, request }) => 
 });
 
 test("invalid archive is rejected before queueing", async ({ request }) => {
+  const auth = await request.post(`${api}/api/auth/register`, { data: { email: `invalid-${Date.now()}@example.test`, password: "correct horse battery" } });
+  const csrf = auth.headers()["set-cookie"].match(/game2web_csrf=([^;]+)/)?.[1] ?? "";
+  const headers = { "x-csrf-token": csrf };
   const zip = new AdmZip();
   zip.addFile("README.txt", Buffer.from("not a supported project"));
-  const response = await request.post(`${api}/api/projects`, { multipart: { name: "invalid", archive: { name: "invalid.zip", mimeType: "application/zip", buffer: zip.toBuffer() } } });
+  const response = await request.post(`${api}/api/projects`, { headers, multipart: { name: "invalid", archive: { name: "invalid.zip", mimeType: "application/zip", buffer: zip.toBuffer() } } });
   expect(response.ok()).toBeTruthy();
   const created = await response.json();
   expect(created.compatibility.compatible).toBeFalsy();
-  const build = await request.post(`${api}/api/projects/${created.project.id}/builds`, { data: {} });
+  const build = await request.post(`${api}/api/projects/${created.project.id}/builds`, { headers, data: {} });
   expect(build.status()).toBe(422);
 });

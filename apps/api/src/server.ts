@@ -18,13 +18,14 @@ const limits = { maxBytes: Number(process.env.BUILD_MAX_UPLOAD_MB ?? 500) * 1024
 const app = Fastify({ logger: true });
 const appOrigin = process.env.APP_ORIGIN ?? "http://localhost:3000";
 const playerOrigin = process.env.PLAYER_ORIGIN ?? "http://localhost:3000";
+const appFrameOrigins = [...new Set([appOrigin, appOrigin.replace("localhost", "127.0.0.1")])].join(" ");
 const rateBuckets = new Map<string, { count: number; reset: number }>();
 app.addHook("onSend", async (_request, reply) => {
   reply.header("X-Content-Type-Options", "nosniff");
   reply.header("Referrer-Policy", "strict-origin-when-cross-origin");
   reply.header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   if (_request.url.startsWith("/api/play/")) {
-    reply.header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; frame-ancestors " + appOrigin);
+    reply.header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; frame-ancestors " + appFrameOrigins);
   } else {
     reply.header("Content-Security-Policy", `default-src 'self'; frame-src 'self' ${playerOrigin}`);
   }

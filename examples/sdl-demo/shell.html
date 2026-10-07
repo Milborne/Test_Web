@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>SDL Demo</title></head>
+<body>
+<main>
+  <h1>SDL Demo</h1>
+  <p id="game-ready" hidden>Game ready</p>
+  <canvas id="canvas" oncontextmenu="event.preventDefault()"></canvas>
+</main>
+<script>
+  var Module = { onRuntimeInitialized: function () {
+    document.getElementById("game-ready").hidden = false;
+  }};
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>

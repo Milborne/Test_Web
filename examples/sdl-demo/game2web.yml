@@ -1,0 +1,8 @@
+project:
+  name: SDL Demo
+build:
+  provider: emscripten-sdl
+output:
+  directory: build/web
+runtime:
+  index: index.html

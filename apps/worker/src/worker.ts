@@ -62,7 +62,9 @@ new Worker("game-builds", async (job) => {
       await writeFile(target, entry.getData(), { mode: 0o644 });
     }
     await update(buildId, "VALIDATING", "Validating deterministic provider compatibility");
-    await update(buildId, "BUILDING", `Running ${providerId} builder`);
+    await update(buildId, "BUILDING", providerId === "emscripten-sdl"
+      ? "Provider: emscripten-sdl; Toolchain: Emscripten 3.1.74; SDL: Emscripten SDL2"
+      : `Running ${providerId} builder`);
     const context: BuildContext = { sourceDirectory, outputDirectory, limits, log: (message) => void addLog(buildId, message) };
     await provider.build(context);
     await update(buildId, "PACKAGING", "Collecting and validating generated artifacts");
@@ -70,6 +72,9 @@ new Worker("game-builds", async (job) => {
     const artifacts = await validateArtifacts(outputDirectory, paths);
     if (artifacts.reduce((total, artifact) => total + artifact.size, 0) > limits.maxDiskMb * 1024 * 1024) {
       throw new Error("Build artifacts exceed configured disk limit");
+    }
+    if (providerId === "emscripten-sdl" && (!artifacts.some((artifact) => artifact.path.endsWith(".wasm")) || !artifacts.some((artifact) => artifact.path.endsWith(".js")))) {
+      throw new Error("Emscripten Web build is missing required WASM or JavaScript runtime artifacts");
     }
     if (providerId === "godot" && (!artifacts.some((artifact) => artifact.path.endsWith(".wasm")) || !artifacts.some((artifact) => artifact.path.endsWith(".js")))) {
       throw new Error("Godot Web export is missing required WASM or JavaScript runtime artifacts");
@@ -102,4 +107,4 @@ async function update(buildId: string, status: "PREPARING" | "VALIDATING" | "BUI
   await addLog(buildId, message);
 }
 async function addLog(buildId: string, message: string) { await prisma.buildLog.create({ data: { buildId, message } }); }
-function mime(file: string) { return file.endsWith(".html") ? "text/html" : file.endsWith(".js") ? "text/javascript" : file.endsWith(".wasm") ? "application/wasm" : file.endsWith(".pck") ? "application/octet-stream" : "application/octet-stream"; }
+function mime(file: string) { return file.endsWith(".html") ? "text/html" : file.endsWith(".js") ? "application/javascript" : file.endsWith(".wasm") ? "application/wasm" : file.endsWith(".pck") ? "application/octet-stream" : "application/octet-stream"; }

@@ -44,6 +44,36 @@ test("Godot upload, build, deployment and player", async ({ page, request }) => 
   await expect(frame.locator("canvas")).toBeVisible({ timeout: 30_000 });
 });
 
+test("SDL upload, Emscripten build, deployment and player", async ({ page, playwright }) => {
+  const request = await playwright.request.newContext();
+  const auth = await request.post(`${api}/api/auth/register`, { data: { email: `sdl-${Date.now()}@example.test`, password: "correct horse battery" } });
+  expect(auth.ok()).toBeTruthy();
+  const csrf = auth.headers()["set-cookie"].match(/game2web_csrf=([^;]+)/)?.[1] ?? "";
+  const archive = await readFile("examples/sdl-demo.zip");
+  const projectResponse = await request.post(`${api}/api/projects`, { headers: { "x-csrf-token": csrf }, multipart: { name: "sdl-demo", archive: { name: "sdl-demo.zip", mimeType: "application/zip", buffer: archive } } });
+  expect(projectResponse.ok()).toBeTruthy();
+  const created = await projectResponse.json();
+  expect(created.compatibility.provider).toBe("emscripten-sdl");
+  expect(created.compatibility.engine).toBe("C/C++ + SDL");
+  expect(created.compatibility.compatible).toBeTruthy();
+  const buildResponse = await request.post(`${api}/api/projects/${created.project.id}/builds`, { headers: { "x-csrf-token": csrf }, data: {} });
+  expect(buildResponse.status()).toBe(202);
+  const build = await buildResponse.json();
+  await expect.poll(async () => {
+    const status = await (await request.get(`${api}/api/builds/${build.id}`)).json();
+    if (status.status === "FAILED") throw new Error(status.error ?? "SDL build failed without an error message");
+    return status.status;
+  }, { timeout: 180_000 }).toBe("READY");
+  const finalBuild = await (await request.get(`${api}/api/builds/${build.id}`)).json();
+  expect(finalBuild.artifacts.some((artifact: { path: string; mimeType: string }) => artifact.path.endsWith(".wasm") && artifact.mimeType === "application/wasm")).toBeTruthy();
+  expect(finalBuild.artifacts.some((artifact: { path: string; mimeType: string }) => artifact.path.endsWith(".js") && artifact.mimeType === "application/javascript")).toBeTruthy();
+  await page.goto(`/play/${created.project.slug}`);
+  const frame = page.frameLocator("iframe");
+  await expect(frame.locator("canvas")).toBeVisible({ timeout: 30_000 });
+  await expect(frame.locator("#game-ready")).toBeVisible({ timeout: 30_000 });
+  await request.dispose();
+});
+
 test("invalid archive is rejected before queueing", async ({ request }) => {
   const auth = await request.post(`${api}/api/auth/register`, { data: { email: `invalid-${Date.now()}@example.test`, password: "correct horse battery" } });
   const csrf = auth.headers()["set-cookie"].match(/game2web_csrf=([^;]+)/)?.[1] ?? "";
@@ -56,6 +86,18 @@ test("invalid archive is rejected before queueing", async ({ request }) => {
   expect(created.compatibility.compatible).toBeFalsy();
   const build = await request.post(`${api}/api/projects/${created.project.id}/builds`, { headers, data: {} });
   expect(build.status()).toBe(422);
+});
+
+test("invalid SDL project is rejected before queueing", async ({ request }) => {
+  const auth = await request.post(`${api}/api/auth/register`, { data: { email: `sdl-invalid-${Date.now()}@example.test`, password: "correct horse battery" } });
+  const csrf = auth.headers()["set-cookie"].match(/game2web_csrf=([^;]+)/)?.[1] ?? "";
+  const archive = await readFile("examples/sdl-invalid.zip");
+  const projectResponse = await request.post(`${api}/api/projects`, { headers: { "x-csrf-token": csrf }, multipart: { name: "sdl-invalid", archive: { name: "sdl-invalid.zip", mimeType: "application/zip", buffer: archive } } });
+  expect(projectResponse.ok()).toBeTruthy();
+  const created = await projectResponse.json();
+  expect(created.compatibility.provider).toBe("emscripten-sdl");
+  expect(created.compatibility.compatible).toBeFalsy();
+  expect((await request.post(`${api}/api/projects/${created.project.id}/builds`, { headers: { "x-csrf-token": csrf }, data: {} })).status()).toBe(422);
 });
 
 test("private project access is isolated between users", async ({ playwright }) => {

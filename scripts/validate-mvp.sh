@@ -34,6 +34,7 @@ run_stage "Lint" npm run lint
 run_stage "Unit tests" npm test
 run_stage "Workspace build" npm run build
 run_stage "Godot builder image" docker build --tag "game2web/godot-builder:${GODOT_VERSION:-4.3.0}" "$ROOT/builders/godot"
+run_stage "Emscripten builder image" docker build --tag "game2web/emscripten-builder:${EMSCRIPTEN_VERSION:-3.1.74}" "$ROOT/builders/emscripten"
 run_stage "Database migrations" npx prisma db push --schema "$ROOT/packages/database/prisma/schema.prisma"
 
 CURRENT_STAGE="Infrastructure"
@@ -68,6 +69,7 @@ record "Provider detection"
 record "Compatibility"
 record "BullMQ worker"
 record "Godot build"
+record "Emscripten SDL build"
 record "Artifact validation"
 record "Deployment"
 record "Player"
@@ -76,5 +78,5 @@ record "Failure E2E"
 cat <<'EOF' | tee -a "$REPORT"
 
 FINAL RESULT:
-PRIVATE BETA READY
+MULTI-ENGINE MVP VALIDATED
 EOF

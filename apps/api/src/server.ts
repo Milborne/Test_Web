@@ -43,7 +43,11 @@ app.get("/readiness", async (_request, reply) => {
     return reply.code(503).send({ status: "not_ready" });
   }
 });
-app.get("/api/providers", async () => Object.values(providers).map((provider) => ({ id: provider.id, available: !["unity", "unreal", "dos"].includes(provider.id) })));
+app.get("/api/providers", async () => Object.values(providers).map((provider) => ({
+  id: provider.id,
+  name: provider.id === "godot" ? "Godot" : provider.id === "emscripten-sdl" ? "C/C++ + SDL" : provider.id,
+  available: !["unity", "unreal", "dos"].includes(provider.id)
+})));
 app.post<{ Body: { email?: string; password?: string } }>("/api/auth/register", async (request, reply) => {
   if (!allowed(request.ip, "register", 10, 60000)) return reply.code(429).send({ error: "Too many attempts; try again shortly" });
   const email = request.body?.email?.trim().toLowerCase() ?? "";
@@ -163,7 +167,7 @@ function archiveEntries(buffer: Buffer): ProjectFile[] {
   });
 }
 function slugify(value: string) { return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "game"; }
-function contentType(path: string, fallback: string) { return path.endsWith(".html") ? "text/html" : path.endsWith(".js") ? "text/javascript" : path.endsWith(".wasm") ? "application/wasm" : fallback; }
+function contentType(path: string, fallback: string) { return path.endsWith(".html") ? "text/html" : path.endsWith(".js") ? "application/javascript" : path.endsWith(".wasm") ? "application/wasm" : fallback; }
 function allowed(key: string, action: string, limit: number, windowMs: number) {
   const now = Date.now();
   const bucketKey = `${action}:${key}`;

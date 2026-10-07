@@ -61,7 +61,7 @@ test("SDL upload, Emscripten build, deployment and player", async ({ page, playw
   const build = await buildResponse.json();
   await expect.poll(async () => {
     const status = await (await request.get(`${api}/api/builds/${build.id}`)).json();
-    if (status.status === "FAILED") throw new Error(status.error ?? "SDL build failed without an error message");
+    if (status.status === "FAILED") throw new Error(`${status.error ?? "SDL build failed without an error message"}\n${status.logs?.map((log: { message: string }) => log.message).join("\n") ?? ""}`);
     return status.status;
   }, { timeout: 180_000 }).toBe("READY");
   const finalBuild = await (await request.get(`${api}/api/builds/${build.id}`)).json();

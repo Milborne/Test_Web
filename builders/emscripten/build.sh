@@ -1,5 +1,5 @@
 #!/bin/sh
-set -eu
+set -eux
 test -f CMakeLists.txt
 test -f game2web.yml
 grep -Eq '^build:[[:space:]]*$' game2web.yml

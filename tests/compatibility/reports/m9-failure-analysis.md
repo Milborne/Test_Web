@@ -124,7 +124,7 @@ also passed static checks and the infrastructure runtime suite, including the
 Godot and SDL build/player paths and the new API rejection E2E. Both runs used
 commit `b83c9d4741e9d2f736e804b7e7e85e0a237e174d`.
 
-**Result: M9.2 PRE-FLIGHT VALIDATED**  
+**Result: M9.2 PRE-FLIGHT VALIDATED**
 The broader Compatibility Lab is not declared complete: this run correctly
 classified all five external projects before build, so none produced external
 artifacts or player sessions.

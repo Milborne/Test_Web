@@ -103,5 +103,28 @@ baseline. It keeps this historical evidence unchanged and adds local fixtures
 for Godot 3 syntax, builder version mismatch, missing Web presets, missing
 resources, and the FBX2glTF limitation. The updated Compatibility Lab reports
 the preflight classification and skips projects rejected before build. A new
-runtime Compatibility Lab run is still required to validate the changes against
-the external repositories.
+runtime Compatibility Lab run validated the changes against the same external
+repositories:
+
+| Project | Previous result (run 37712046826) | Preflight result (run 37715094089) | Build started |
+|---|---|---|---|
+| Turn-based RPG | `BUILD_FAILED` | `REQUIRES_ADAPTATION` — Godot 4.0 has no configured matching builder; Web preset is missing | No |
+| Godot Runner | `BUILD_FAILED` | `UNSUPPORTED` — Godot 3.x legacy API markers | No |
+| Godot 2D Platformer | `BUILD_FAILED` | `REQUIRES_ADAPTATION` — requires Godot 4.4, but only 4.3 builder is configured | No |
+| RoboBlast | `BUILD_FAILED` | `REQUIRES_ADAPTATION` — Godot 4.2 builder absent; non-Web preset, Forward renderer, and FBX conversion dependency | No |
+| GDQuest A-RPG | `BUILD_FAILED` | `UNSUPPORTED` — Godot 3.x legacy API markers | No |
+
+The new report recorded preflight times between 1 and 11 ms per project. All
+five returned `NOT_RUN` for build, artifacts, and player; therefore the lab run
+demonstrates that known incompatibilities no longer consume a worker, not that
+these external projects are playable.
+
+The normal CI run [37714277688](https://github.com/Milbornee/Test_Web/actions/runs/37714277688)
+also passed static checks and the infrastructure runtime suite, including the
+Godot and SDL build/player paths and the new API rejection E2E. Both runs used
+commit `b83c9d4741e9d2f736e804b7e7e85e0a237e174d`.
+
+**Result: M9.2 PRE-FLIGHT VALIDATED**  
+The broader Compatibility Lab is not declared complete: this run correctly
+classified all five external projects before build, so none produced external
+artifacts or player sessions.

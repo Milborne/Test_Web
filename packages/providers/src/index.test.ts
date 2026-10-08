@@ -100,7 +100,7 @@ test("extracts quoted resource paths without truncating spaces or punctuation", 
     String.raw`preload("res://Some Folder/My Asset (1).tres")`,
     String.raw`preload("res://folder/escaped\ name.tres")`,
     String.raw`preload("res://folder/quoted\"name.tres")`,
-    String.raw`res://folder/unquoted\ path(My Asset).tres`,
+    String.raw`res://folder/unquoted\ path(My\ Asset).tres`,
     'var first = "res://first.tres"; var second = "res://second.tres"',
     '# preload("res://commented/missing.tres")',
     'var not_a_reference = "user://save.dat"'

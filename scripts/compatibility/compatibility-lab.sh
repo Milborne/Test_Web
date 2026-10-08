@@ -154,3 +154,20 @@ done < "$METADATA"
   printf 'results:\n'
   cat "$TMP_REPORT"
 } > "$RESULTS"
+
+regression_status="PASS"
+for baseline in "$ROOT"/tests/compatibility/baselines/*.yml; do
+  [ -f "$baseline" ] || continue
+  baseline_project="$(awk -F': ' '$1 == "project" { print $2; exit }' "$baseline")"
+  baseline_result="$(awk -F': ' '$1 == "result" { print $2; exit }' "$baseline")"
+  current_result="$(awk -v project="$baseline_project" '
+    $0 ~ "project: " project "$" { found=1 }
+    found && $1 == "compatibility:" { print $2; exit }
+  ' "$RESULTS")"
+  if [ "$baseline_result" = "SUPPORTED" ] && [ "$current_result" = "BUILD_FAILED" ]; then
+    printf 'REGRESSION: %s previous=%s current=%s\n' "$baseline_project" "$baseline_result" "$current_result" | tee -a "$REPORT_ROOT/summary.txt"
+    regression_status="FAIL"
+  fi
+done
+printf 'Regression checks: %s\n' "$regression_status" | tee -a "$REPORT_ROOT/summary.txt"
+[ "$regression_status" = "PASS" ]

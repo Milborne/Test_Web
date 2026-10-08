@@ -25,6 +25,8 @@ jobs:
           cache: npm
       - run: npm install --no-audit --no-fund
       - run: npm run typecheck
+      - run: npm run lint
+      - run: shellcheck scripts/compatibility/*.sh
       - run: docker compose -f infra/docker-compose.yml up -d
       - run: docker build --tag game2web/godot-builder:4.3.0 builders/godot
       - run: npx prisma db push --schema packages/database/prisma/schema.prisma

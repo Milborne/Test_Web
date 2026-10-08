@@ -146,7 +146,10 @@ app.post<{ Params: { id: string }; Body: { provider?: ProviderId } }>("/api/proj
     provider: report.provider,
     sourceStorageKey,
     godotExportPreset: report.preflight?.webExportPreset,
-    godotProjectDirectory: report.preflight?.projectDirectory
+    godotProjectDirectory: report.preflight?.projectDirectory,
+    godotBuilderVersion: report.preflight?.builderVersion,
+    generateTemporaryWebPreset: report.preflight?.generateTemporaryWebPreset,
+    useCompatibilityRenderer: report.preflight?.useCompatibilityRenderer
   }, { jobId: build.id, removeOnComplete: 100, removeOnFail: 100 });
   return reply.code(202).send({ id: build.id, projectId: project.id, provider: report.provider, status: build.status, preflight: report.preflight });
 });

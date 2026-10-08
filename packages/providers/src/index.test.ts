@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import path from "node:path";
-import { detectProject, preflightGodot, readGodotProjectFiles } from "./index.js";
+import { detectProject, GODOT_BUILDER_REGISTRY, preflightGodot, readGodotProjectFiles, selectGodotBuilder } from "./index.js";
 
 test("detects the Godot demo deterministically", () => {
   const result = detectProject([{ path: "project.godot", size: 400 }, { path: "scenes/main.tscn", size: 1200 }]);
@@ -51,16 +51,25 @@ test("rejects Godot 3 projects before building", async () => {
 
 test("rejects projects that require a different Godot builder version", async () => {
   const result = preflightGodot(await fixture("version-mismatch"));
-  assert.equal(result.status, "REQUIRES_ADAPTATION");
+  assert.equal(result.status, "REQUIRES_BUILDER");
   assert.equal(result.engineVersion?.raw, "4.4");
-  assert.match(result.errors.join(" "), /no matching Game2Web builder/);
+  assert.match(result.errors.join(" "), /no explicitly compatible Game2Web builder/);
+  assert.equal(result.builderImage, null);
 });
 
-test("requires adaptation when no Web export preset exists", async () => {
+test("rejects projects without a detectable Godot version instead of selecting a fallback builder", () => {
+  const result = preflightGodot([{ path: "project.godot", size: 100, content: "config_version=5\n" }]);
+  assert.equal(result.status, "REQUIRES_BUILDER");
+  assert.equal(result.builderVersion, null);
+  assert.equal(result.builderImage, null);
+});
+
+test("generates a temporary Web preset for a safe Godot 2D project", async () => {
   const result = preflightGodot(await fixture("missing-web-preset"));
-  assert.equal(result.status, "REQUIRES_ADAPTATION");
-  assert.equal(result.webExportStatus, "WEB_EXPORT_INVALID");
-  assert.match(result.errors.join(" "), /no valid Web platform preset/);
+  assert.equal(result.status, "SUPPORTED_WITH_WARNINGS");
+  assert.equal(result.webExportStatus, "WEB_EXPORT_MISSING");
+  assert.equal(result.generateTemporaryWebPreset, true);
+  assert.equal(result.webExportPreset, "Game2Web Web");
 });
 
 test("accepts a valid Web preset and preserves its configured name", async () => {
@@ -80,4 +89,23 @@ test("identifies FBX assets that need the unavailable converter", async () => {
   const result = preflightGodot(await fixture("fbx-asset"));
   assert.equal(result.status, "REQUIRES_ADAPTATION");
   assert.match(result.errors.join(" "), /FBX2glTF converter/);
+});
+
+test("uses only explicitly declared builder compatibility and prefers exact matches", () => {
+  assert.equal(selectGodotBuilder("4.3")?.version, "4.3");
+  assert.equal(selectGodotBuilder("4.0")?.version, "4.3");
+  assert.equal(selectGodotBuilder("4.4"), undefined);
+  assert.equal(GODOT_BUILDER_REGISTRY[0].digest, null);
+  assert.match(GODOT_BUILDER_REGISTRY[0].baseImageDigest, /^sha256:[0-9a-f]{64}$/);
+});
+
+test("preflights the M9 Turn-based RPG requirements with temporary Web adaptations", async () => {
+  const result = preflightGodot(await fixture("turn-based-rpg"));
+  assert.equal(result.status, "SUPPORTED_WITH_WARNINGS");
+  assert.equal(result.engineVersion?.raw, "4.0");
+  assert.equal(result.builderVersion, "4.3");
+  assert.equal(result.builderImage, "game2web/godot-builder:4.3.0");
+  assert.equal(result.generateTemporaryWebPreset, true);
+  assert.equal(result.useCompatibilityRenderer, true);
+  assert.deepEqual(result.missingFiles, []);
 });

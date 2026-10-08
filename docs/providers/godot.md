@@ -7,13 +7,14 @@ it does not run project scripts, plugins, binaries, or user commands.
 
 ## Engine and builder versions
 
-The pinned builder matrix currently contains only Godot 4.3. A project that
-declares a different Godot 4 minor version is classified as
-`REQUIRES_ADAPTATION` until a matching builder is configured. Godot 3 projects
-are `UNSUPPORTED`; Game2Web does not migrate project files. A missing version
-declaration is reported as `SUPPORTED_WITH_WARNINGS` only when the other Web
-requirements pass, because preflight cannot safely infer a version from absent
-metadata.
+The pinned builder matrix currently contains only Godot 4.3. The registry
+selects an exact builder match first and permits only explicitly listed
+project-version compatibility; it does not silently fall back to 4.3. The
+current compatibility allow-list includes Godot 4.0 for the M9.3 external
+project validation. That mapping remains subject to a successful real build.
+Other unlisted Godot 4 versions and projects without a detectable version are
+`REQUIRES_BUILDER`. Godot 3 projects are `UNSUPPORTED`; Game2Web does not
+migrate project files.
 
 The version-to-builder mapping is centralized in
 `packages/providers/src/index.ts`. Additional pinned images can be added to that
@@ -21,13 +22,15 @@ matrix without changing the version-selection logic.
 
 ## Web export requirements
 
-A project must contain exactly one runnable export preset whose platform is
-`Web`. The preset name can be any name; the provider passes the inspected name
-to the builder rather than assuming it is literally `Web`. Game2Web does not
-generate or persistently edit `export_presets.cfg`. Missing or ambiguous
-presets are `REQUIRES_ADAPTATION`. The Web export also requires Godot's
-Compatibility renderer; Forward+ and Forward Mobile projects are rejected
-before build.
+A project with a preset must contain exactly one runnable export preset whose
+platform is `Web`. The preset name can be any name; the provider passes the
+inspected name to the builder rather than assuming it is literally `Web`. If
+no preset exists and static checks identify a 2D project without other blockers,
+the builder generates a controlled temporary preset in its writable copy.
+It never edits the stored source archive. For similarly safe 2D projects, a
+Forward renderer setting can be overridden with Compatibility only in that
+temporary copy. Projects with 3D indicators are not switched automatically.
+Ambiguous/invalid presets and unsafe adaptations require project changes.
 
 ## Resource and dependency checks
 
@@ -55,18 +58,20 @@ passing the static checks.
 
 ## Result statuses
 
-- `SUPPORTED`: the declared engine has a matching builder, and the project has
-  one valid Web preset with no detected blocker.
-- `SUPPORTED_WITH_WARNINGS`: the project meets known requirements, but its
-  engine version could not be confirmed.
-- `REQUIRES_ADAPTATION`: a remediable input requirement is missing or unsupported
-  by the configured builder, such as a Web preset, resource, renderer, native
-  extension, or FBX conversion dependency.
+- `SUPPORTED`: an explicitly compatible builder is configured and the project
+  has one valid Web preset with no detected blocker.
+- `SUPPORTED_WITH_WARNINGS`: known requirements pass, with bounded temporary
+  adaptations or other non-blocking warnings.
+- `REQUIRES_BUILDER`: the project's engine version has no explicit compatible
+  builder mapping, or its version cannot be determined.
+- `REQUIRES_ADAPTATION`: a project requirement needs changes, such as missing
+  resources, an unsafe renderer change, native extensions, or FBX conversion.
 - `UNSUPPORTED`: the engine major version is outside the provider's supported
   range, or the project structure is ambiguous.
 
 Only `SUPPORTED` and `SUPPORTED_WITH_WARNINGS` projects are queued. A
 `BUILD_FAILED` result is reserved for a project that passed preflight and then
-failed in the actual builder. Preflight status, builder version, selected Web
-preset, missing files, warnings, errors, requirements, and inspection duration
-are returned by the API and included in Compatibility Lab reports.
+failed in the actual builder. Preflight status, builder version/image/digests,
+temporary adaptations, selected Web preset, missing files, warnings, errors,
+requirements, and inspection duration are returned by the API and included in
+Compatibility Lab reports.

@@ -13,6 +13,8 @@ LICENSES="$REPORT_ROOT/licenses.md"
 METADATA="$WORKSPACE/projects.tsv"
 TMP_REPORT="$WORKSPACE/results.tmp"
 : > "$TMP_REPORT"
+required_project_seen=false
+required_project="${COMPATIBILITY_REQUIRED_PROJECT:-}"
 
 cleanup() {
   rm -rf "$WORKSPACE"
@@ -21,6 +23,7 @@ trap cleanup EXIT
 
 fetch_metadata="$(bash "$ROOT/scripts/compatibility/fetch-external-projects.sh" "$MANIFEST" "$WORKSPACE")"
 [ -f "$fetch_metadata" ]
+[ -s "$fetch_metadata" ] || { printf 'No projects selected for Compatibility Lab\n' >&2; exit 1; }
 
 cat > "$LICENSES" <<'EOF'
 # Compatibility Lab License Report
@@ -36,6 +39,10 @@ printf '%s\n' "Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$REPORT_ROOT/summa
 
 json_field() {
   node -e 'const fs=require("fs"); const value=JSON.parse(fs.readFileSync(0,"utf8")); let v=value; for (const key of process.argv.slice(1)) v=v?.[key]; process.stdout.write(v == null ? "" : String(v));' "$@"
+}
+
+yaml_quote() {
+  node -e 'process.stdout.write(JSON.stringify(process.argv[1]))' "$1"
 }
 
 register() {
@@ -61,13 +68,21 @@ while IFS=$'\t' read -r id repository commit branch license_file project_dir; do
   [ -n "$license_file" ] && license_text="$(head -1 "$project_dir/$license_file" | tr -d '\r' || true)"
   printf '%s\n' "| $id | $repository | \`$commit\` | $license_text | See upstream | Not published automatically |" >> "$LICENSES"
 
-  git -C "$project_dir" archive --format=zip --output="$project_report/source.zip" HEAD
-  response="$(curl --fail --silent --show-error -b "$cookie" -H "x-csrf-token: $csrf" \
-    -F "name=$id" -F "archive=@$project_report/source.zip;type=application/zip" \
-    "$API_URL/api/projects")" || response=""
+  source_archive="$WORKSPACE/$id-source.zip"
+  git -C "$project_dir" archive --format=zip --output="$source_archive" HEAD
+  warnings=""
+  errors=""
+  if ! response="$(curl --fail --silent --show-error -b "$cookie" -H "x-csrf-token: $csrf" \
+    -F "name=$id" -F "archive=@$source_archive;type=application/zip" \
+    "$API_URL/api/projects")"; then
+    response=""
+    errors="project upload failed"
+  fi
+  printf '%s\n' "$response" > "$project_report/upload.json"
   project_id="$(printf '%s' "$response" | json_field project id || true)"
   provider="$(printf '%s' "$response" | json_field compatibility provider || true)"
   compatible="$(printf '%s' "$response" | json_field compatibility compatible || true)"
+  warnings="$(printf '%s' "$response" | json_field compatibility warnings || true)"
   preflight_status="$(printf '%s' "$response" | json_field compatibility preflight status || true)"
   preflight_ms="$(printf '%s' "$response" | json_field compatibility preflight durationMs || true)"
   version="$(printf '%s' "$response" | json_field compatibility preflight engineVersion raw || true)"
@@ -81,24 +96,42 @@ while IFS=$'\t' read -r id repository commit branch license_file project_dir; do
   artifacts_status="NOT_RUN"
   player_status="NOT_RUN"
   result="UNSUPPORTED"
-  warnings=""
-  errors=""
+  if [ -n "$required_project" ] && [ "$id" = "$required_project" ]; then
+    required_project_seen=true
+  fi
 
-  if [ "$provider" = "godot" ] && { [ "$preflight_status" = "UNSUPPORTED" ] || [ "$preflight_status" = "REQUIRES_ADAPTATION" ]; }; then
+  if [ "$provider" = "godot" ] && { [ "$preflight_status" = "UNSUPPORTED" ] || [ "$preflight_status" = "REQUIRES_ADAPTATION" ] || [ "$preflight_status" = "REQUIRES_BUILDER" ]; }; then
     result="$preflight_status"
     errors="$(printf '%s' "$response" | json_field compatibility preflight errors || true)"
+  elif [ -z "$provider" ]; then
+    result="UPLOAD_FAILED"
+    [ -n "$errors" ] || errors="$(printf '%s' "$response" | json_field error || true)"
   elif [ "$provider" = "godot" ] && [ "$compatible" = "true" ]; then
-    build_response="$(curl --fail --silent --show-error -b "$cookie" -H "x-csrf-token: $csrf" \
-      -H 'content-type: application/json' -d '{}' "$API_URL/api/projects/$project_id/builds" || true)"
+    if ! build_response="$(curl --fail --silent --show-error -b "$cookie" -H "x-csrf-token: $csrf" \
+      -H 'content-type: application/json' -d '{}' "$API_URL/api/projects/$project_id/builds")"; then
+      build_response=""
+      errors="build request failed"
+    fi
+    printf '%s\n' "$build_response" > "$project_report/build-request.json"
     build_id="$(printf '%s' "$build_response" | json_field id || true)"
     if [ -n "$build_id" ]; then
+      status=""
+      status_json=""
+      poll_error=""
       for _ in $(seq 1 180); do
-        status_json="$(curl --fail --silent --show-error -b "$cookie" "$API_URL/api/builds/$build_id")"
+        if ! status_json="$(curl --fail --silent --show-error -b "$cookie" "$API_URL/api/builds/$build_id")"; then
+          poll_error="build status request failed"
+          break
+        fi
+        printf '%s\n' "$status_json" > "$project_report/build.json"
         status="$(printf '%s' "$status_json" | json_field status)"
         case "$status" in READY|FAILED) break;; esac
         sleep 2
       done
-      if [ "$status" = "READY" ]; then
+      if [ -n "$poll_error" ]; then
+        build_status="FAIL"
+        errors="$poll_error"
+      elif [ "$status" = "READY" ]; then
         build_status="PASS"
         index_size="$(printf '%s' "$status_json" | node -e 'const fs=require("fs"); const x=JSON.parse(fs.readFileSync(0)); const a=x.artifacts?.find(a=>a.path==="index.html"); process.stdout.write(a?.size>0?"1":"0")')"
         if [ "$index_size" = "1" ]; then artifacts_status="PASS"; else artifacts_status="FAIL"; errors="index.html missing or empty"; fi
@@ -106,7 +139,12 @@ while IFS=$'\t' read -r id repository commit branch license_file project_dir; do
           slug="$(printf '%s' "$status_json" | json_field project slug)"
           if curl --fail --silent --show-error "$API_URL/api/play/$slug/" | grep -q '<' \
             && node "$ROOT/scripts/compatibility/player-check.mjs" "$APP_URL" "$slug"; then
-            player_status="PASS"
+            if EXTERNAL_GAME_SLUG="$slug" npx playwright test "$ROOT/e2e/external-player.spec.ts" --reporter=line; then
+              player_status="PASS"
+            else
+              player_status="FAIL"
+              errors="external Playwright runtime validation failed"
+            fi
           else
             player_status="FAIL"
             errors="temporary player did not return published HTML"
@@ -115,15 +153,18 @@ while IFS=$'\t' read -r id repository commit branch license_file project_dir; do
       else
         build_status="FAIL"
         errors="$(printf '%s' "$status_json" | json_field error || true)"
+        [ -n "$errors" ] || errors="build did not reach READY within 6 minutes"
       fi
     else
       build_status="FAIL"
-      errors="build was not queued"
+      [ -n "$errors" ] || errors="build was not queued"
     fi
     if [ "$build_status" = "PASS" ] && [ "$artifacts_status" = "PASS" ] && [ "$player_status" = "PASS" ]; then
       result="SUPPORTED"
     elif [ "$build_status" = "PASS" ] && [ "$artifacts_status" = "PASS" ]; then
       result="PLAYER_FAILED"
+    elif [ "$build_status" = "PASS" ] && [ "$artifacts_status" = "FAIL" ]; then
+      result="ARTIFACTS_FAILED"
     elif [ "$build_status" = "FAIL" ]; then
       result="BUILD_FAILED"
     else
@@ -148,15 +189,25 @@ while IFS=$'\t' read -r id repository commit branch license_file project_dir; do
     preflight_status: ${preflight_status:-NOT_AVAILABLE}
     preflight_duration_ms: $preflight_ms
     builder_version: "$builder_version"
+    builder_image: $(yaml_quote "$(printf '%s' "$response" | json_field compatibility preflight builderImage || true)")
+    builder_digest: $(yaml_quote "$(printf '%s' "$response" | json_field compatibility preflight builderDigest || true)")
+    builder_base_digest: $(yaml_quote "$(printf '%s' "$response" | json_field compatibility preflight builderBaseImageDigest || true)")
     web_export_status: $web_export_status
-    warnings: ["${warnings//\"/\\\"}"]
-    errors: ["${errors//\"/\\\"}"]
+    adaptations: [$(yaml_quote "$(printf '%s' "$response" | json_field compatibility preflight adaptations || true)")]
+    source_commit: $commit
+    warnings: [$(yaml_quote "$warnings")]
+    errors: [$(yaml_quote "$errors")]
 EOF
   {
     printf '\n%s\n' "$id"
     printf '  Godot: %s\n  Preflight: %s (%sms)\n  Builder: %s\n  Web export: %s\n  Build: %s\n  Artifacts: %s\n  Player: %s\n  Result: %s\n' "$version" "$preflight_status" "$preflight_ms" "$builder_version" "$web_export_status" "$build_status" "$artifacts_status" "$player_status" "$result"
   } | tee -a "$REPORT_ROOT/summary.txt"
 done < "$METADATA"
+
+if [ -n "$required_project" ] && [ "$required_project_seen" != "true" ]; then
+  printf 'Required Compatibility Lab project was not fetched: %s\n' "$required_project" | tee -a "$REPORT_ROOT/summary.txt"
+  exit 1
+fi
 
 {
   printf 'generated_at: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -181,3 +232,13 @@ for baseline in "$ROOT"/tests/compatibility/baselines/*.yml; do
 done
 printf 'Regression checks: %s\n' "$regression_status" | tee -a "$REPORT_ROOT/summary.txt"
 [ "$regression_status" = "PASS" ]
+if [ -n "$required_project" ]; then
+  required_result="$(awk -v project="$required_project" '
+    $0 ~ "project: " project "$" { found=1 }
+    found && $1 == "compatibility:" { print $2; exit }
+  ' "$RESULTS")"
+  if [ "$required_result" != "SUPPORTED" ]; then
+    printf 'Required project did not complete build, artifact, and player validation: %s (%s)\n' "$required_project" "${required_result:-NOT_REPORTED}" | tee -a "$REPORT_ROOT/summary.txt"
+    exit 1
+  fi
+fi

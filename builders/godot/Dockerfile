@@ -1,4 +1,4 @@
-FROM flashlight13/godot:4.3
+FROM flashlight13/godot:4.3@sha256:5df8082d218b41df626b0d30dd0aebeee9d31963347cccbbf83c697f5135618a
 USER root
 RUN apt-get update \
   && apt-get install --yes --no-install-recommends ca-certificates curl libfontconfig1 unzip \

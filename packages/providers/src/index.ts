@@ -5,9 +5,31 @@ import path from "node:path";
 import type { BuildContext, DetectionResult, EngineVersion, PreflightResult, ProjectFile, ProviderId } from "@game2web/shared";
 
 const execFileAsync = promisify(execFile);
-const GODOT_BUILDER_MATRIX = {
-  "4.3": { version: "4.3", image: "game2web/godot-builder:4.3.0", supportsFbx2Gltf: false }
-} as const;
+export interface GodotBuilderConfig {
+  version: string;
+  image: string;
+  digest: string | null;
+  baseImage: string;
+  baseImageDigest: string;
+  supportedExportFormats: readonly string[];
+  compatibleProjectVersions: readonly string[];
+  status: "available" | "planned" | "disabled";
+  supportsFbx2Gltf: boolean;
+}
+
+export const GODOT_BUILDER_REGISTRY: readonly GodotBuilderConfig[] = [
+  {
+    version: "4.3",
+    image: "game2web/godot-builder:4.3.0",
+    digest: null,
+    baseImage: "flashlight13/godot:4.3",
+    baseImageDigest: "sha256:5df8082d218b41df626b0d30dd0aebeee9d31963347cccbbf83c697f5135618a",
+    supportedExportFormats: ["Web"],
+    compatibleProjectVersions: ["4.0"],
+    status: "available",
+    supportsFbx2Gltf: false
+  }
+];
 const PREFLIGHT_TEXT_FILE_LIMIT = 1024 * 1024;
 const PREFLIGHT_TEXT_TOTAL_LIMIT = 16 * 1024 * 1024;
 const PREFLIGHT_TEXT_EXTENSIONS = new Set([".godot", ".cfg", ".gd", ".tscn", ".tres", ".import", ".gdextension", ".gdnlib", ".gdns", ".json", ".cs"]);
@@ -76,11 +98,11 @@ export class GodotProvider implements BuildProvider {
   }
   async build(context: BuildContext) {
     if (!context.godotExportPreset) throw new Error("Godot Web export was not preflighted; no build was started");
-    const builder = builderForVersion(process.env.GODOT_BUILDER_VERSION ?? "4.3");
+    const builder = context.godotBuilderVersion ? builderForVersion(context.godotBuilderVersion) : undefined;
     if (!builder) throw new Error("No compatible Godot builder is configured; no build was started");
     context.log("Starting isolated Godot Web exporter");
     try {
-      const result = await execFileAsync("docker", ["run", "--rm", "--network=none", "--cap-drop=ALL", "--security-opt", "no-new-privileges:true", "--pids-limit", String(context.limits.maxPids), "--cpus", String(context.limits.maxCpus), "--memory", `${context.limits.maxMemoryMb}m`, "--user", "1000:1000", "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=512m", "-e", `GODOT_EXPORT_PRESET=${context.godotExportPreset}`, "-e", `GODOT_PROJECT_DIRECTORY=${context.godotProjectDirectory ?? ""}`, "-v", `${context.sourceDirectory}:/src:ro`, "-v", `${context.outputDirectory}:/out`, process.env.GODOT_BUILDER_IMAGE ?? builder.image], { timeout: context.limits.maxBuildMinutes * 60_000 });
+      const result = await execFileAsync("docker", ["run", "--rm", "--network=none", "--cap-drop=ALL", "--security-opt", "no-new-privileges:true", "--pids-limit", String(context.limits.maxPids), "--cpus", String(context.limits.maxCpus), "--memory", `${context.limits.maxMemoryMb}m`, "--user", "1000:1000", "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=512m", "-e", `GODOT_EXPORT_PRESET=${context.godotExportPreset}`, "-e", `GODOT_PROJECT_DIRECTORY=${context.godotProjectDirectory ?? ""}`, "-e", `GODOT_GENERATE_WEB_PRESET=${context.generateTemporaryWebPreset ? "1" : "0"}`, "-e", `GODOT_USE_COMPATIBILITY_RENDERER=${context.useCompatibilityRenderer ? "1" : "0"}`, "-v", `${context.sourceDirectory}:/src:ro`, "-v", `${context.outputDirectory}:/out`, builder.image], { timeout: context.limits.maxBuildMinutes * 60_000 });
       context.log(result.stdout);
     } catch (error) {
       const output = error as { stdout?: string; stderr?: string };
@@ -115,8 +137,14 @@ export function detectProject(files: ProjectFile[], override?: ProviderId): Dete
   return { provider: null, engine: "Unknown", confidence: "low", compatible: false, reasons: ["No supported deterministic project markers were found"], warnings: ["Select a supported provider and provide its required project files"] };
 }
 
-function builderForVersion(version: string) {
-  return Object.values(GODOT_BUILDER_MATRIX).find((builder) => builder.version === version);
+export function builderForVersion(version: string) {
+  return GODOT_BUILDER_REGISTRY.find((builder) => builder.version === version && builder.status === "available");
+}
+
+export function selectGodotBuilder(projectVersion: string) {
+  const exact = GODOT_BUILDER_REGISTRY.find((builder) => builder.version === projectVersion && builder.status === "available");
+  if (exact) return exact;
+  return GODOT_BUILDER_REGISTRY.find((builder) => builder.status === "available" && builder.compatibleProjectVersions.includes(projectVersion));
 }
 
 export function isGodotPreflightTextFile(filePath: string) {
@@ -154,14 +182,25 @@ export function preflightGodot(files: ProjectFile[], durationMs = 0): PreflightR
   const warnings: string[] = [];
   const missingFiles = new Set<string>();
   const requirements: string[] = [];
+  const adaptations: string[] = [];
+  const plugins: PreflightResult["plugins"] = [];
   let unsupportedStructure = false;
+  let requiresBuilder = false;
+  let generateTemporaryWebPreset = false;
+  let useCompatibilityRenderer = false;
   const projectFiles = files.filter((file) => /(^|\/)project\.godot$/i.test(file.path));
-  const builderVersion = process.env.GODOT_BUILDER_VERSION ?? "4.3";
   const engineVersion = projectFiles.length === 1 ? detectGodotVersion(projectFiles[0], files) : null;
+  const selectedBuilder = engineVersion?.minor !== undefined ? selectGodotBuilder(`${engineVersion.major}.${engineVersion.minor}`) : undefined;
+  const builderVersion = selectedBuilder?.version ?? null;
   const projectDirectory = projectFiles.length === 1 ? path.posix.dirname(projectFiles[0].path).replace(/^\.$/, "") : undefined;
   const presetsFile = projectDirectory ? `${projectDirectory}/export_presets.cfg` : "export_presets.cfg";
   const presetFile = files.find((file) => file.path === presetsFile || (projectDirectory === "" && file.path === "export_presets.cfg"));
   const webPresets = presetFile?.content ? parseWebPresets(presetFile.content) : [];
+  const projectContent = projectFiles[0]?.content ?? "";
+  const allText = files.filter((file) => file.content !== undefined).map((file) => file.content ?? "").join("\n");
+  const threeDIndicators = files.some((file) => /\.(fbx|glb|gltf|obj|dae|blend)$/i.test(file.path))
+    || /type="(?:Node3D|Node3D|MeshInstance3D|Camera3D|CharacterBody3D|RigidBody3D|StaticBody3D|Skeleton3D|Sprite3D|AnimationPlayer3D)"/.test(allText)
+    || /extends\s+(?:Node3D|MeshInstance3D|Camera3D|CharacterBody3D|RigidBody3D|StaticBody3D|Skeleton3D|Sprite3D)\b/.test(allText);
   let webExportStatus: PreflightResult["webExportStatus"] = "WEB_EXPORT_MISSING";
   let webExportPreset: string | undefined;
   let status: PreflightResult["status"] = "SUPPORTED";
@@ -175,8 +214,7 @@ export function preflightGodot(files: ProjectFile[], durationMs = 0): PreflightR
     unsupportedStructure = true;
   }
   if (!presetFile) {
-    errors.push("No export_presets.cfg was found beside project.godot. Add a Web export preset; Game2Web does not modify project files.");
-    requirements.push("A valid Godot Web export preset");
+    webExportStatus = "WEB_EXPORT_MISSING";
   } else if (!presetFile.content) {
     errors.push("export_presets.cfg could not be inspected within the preflight text-file limits.");
     requirements.push("A readable Web export preset");
@@ -195,27 +233,38 @@ export function preflightGodot(files: ProjectFile[], durationMs = 0): PreflightR
   }
 
   if (!engineVersion) {
-    warnings.push("The project does not declare a detectable Godot version; builder compatibility cannot be confirmed.");
+    errors.push("The project does not declare a detectable Godot version; no builder can be selected explicitly.");
+    requirements.push("A detectable Godot project version with an explicitly compatible builder");
+    requiresBuilder = true;
   } else if (engineVersion.major < 4) {
     errors.push(`This Game2Web provider supports Godot 4.x projects only. Detected: ${engineVersion.raw}.`);
     unsupportedStructure = true;
-  } else if (engineVersion.minor !== undefined && !builderForVersion(`${engineVersion.major}.${engineVersion.minor}`)) {
-    errors.push(`This project requires Godot ${engineVersion.major}.${engineVersion.minor}, but no matching Game2Web builder is configured. Current builder: Godot ${builderVersion}.`);
-    requirements.push(`A Godot ${engineVersion.major}.${engineVersion.minor} builder`);
-  } else if (engineVersion.minor !== undefined && `${engineVersion.major}.${engineVersion.minor}` !== builderVersion) {
-    errors.push(`This project requires Godot ${engineVersion.major}.${engineVersion.minor}, but the configured builder is Godot ${builderVersion}.`);
-    requirements.push(`A matching Godot ${engineVersion.major}.${engineVersion.minor} builder`);
+  } else if (engineVersion.minor === undefined || !selectedBuilder) {
+    errors.push(`This project requires Godot ${engineVersion.raw}, but no explicitly compatible Game2Web builder is configured.`);
+    requirements.push(`A builder explicitly compatible with Godot ${engineVersion.raw}`);
+    requiresBuilder = true;
   }
 
   if (projectFiles.length === 1) {
-    const projectContent = projectFiles[0].content ?? "";
     const renderer = projectContent.match(/renderer\/rendering_method(?:\.mobile)?\s*=\s*"([^"]+)"/)?.[1];
-    const featureLine = projectContent.match(/config\/features\s*=\s*PackedStringArray\(([^)]*)\)/)?.[1] ?? "";
-    if ((renderer && renderer !== "gl_compatibility") || /Forward Plus|Forward Mobile/i.test(featureLine)) {
-      errors.push("Godot Web export requires the Compatibility renderer; this project selects a Forward renderer.");
+    const forwardRenderer = (renderer !== undefined && renderer !== "gl_compatibility") || /Forward Plus|Forward Mobile/i.test(projectContent.match(/config\/features\s*=\s*PackedStringArray\(([^)]*)\)/)?.[1] ?? "");
+    const compatibilityRenderer = renderer === "gl_compatibility" || /GL Compatibility/i.test(projectContent);
+    if (!compatibilityRenderer) {
+      if (!threeDIndicators) {
+        useCompatibilityRenderer = true;
+        adaptations.push("Override renderer to Compatibility in temporary build workspace");
+        if (forwardRenderer) warnings.push("The project selects Forward Plus; Game2Web will use the Compatibility renderer in a temporary copy for Web export.");
+      } else {
+        errors.push("Godot Web export requires the Compatibility renderer; this project selects or appears to require a Forward renderer.");
+        requirements.push("A Web-compatible Compatibility renderer configuration");
+      }
+    }
+    if (renderer && renderer !== "gl_compatibility" && !forwardRenderer) {
+      errors.push(`Unsupported Godot renderer configured: ${renderer}.`);
       requirements.push("Godot Compatibility renderer for Web");
-    } else if (renderer !== "gl_compatibility" && !/GL Compatibility/i.test(featureLine)) {
-      errors.push("Godot Web export requires an explicitly configured Compatibility renderer; the project renderer could not be verified.");
+    }
+    if (threeDIndicators && !compatibilityRenderer) {
+      errors.push("3D nodes or assets were detected and cannot be safely switched to the Web Compatibility renderer automatically.");
       requirements.push("Godot Compatibility renderer for Web");
     }
   }
@@ -224,19 +273,35 @@ export function preflightGodot(files: ProjectFile[], durationMs = 0): PreflightR
   const textFiles = files.filter((file) => file.content !== undefined && isGodotPreflightTextFile(file.path));
   if (textFiles.length === 0) warnings.push("Project text files were unavailable for resource and plugin reference checks.");
   for (const file of textFiles) {
-    for (const match of (file.content ?? "").matchAll(/res:\/\/([^"'`\r\n,)]+)/g)) {
-      const resource = match[1].replace(/[\])}]+$/, "").replaceAll("\\", "/");
+    const content = file.content ?? "";
+    const quotedResources = [...content.matchAll(/(["'])res:\/\/(.*?)\1/g)].map((match) => match[2]);
+    const unquotedResources = [...content.matchAll(/res:\/\/([A-Za-z0-9_./-]+)/g)].map((match) => match[1]);
+    for (const rawResource of new Set([...quotedResources, ...unquotedResources])) {
+      const resource = rawResource.replaceAll("\\", "/");
       if (resource.startsWith(".godot/") || resource.startsWith(".import/") || resource.includes("://")) continue;
       const resolved = projectDirectory ? `${projectDirectory}/${resource}` : resource;
       if (!availablePaths.has(resolved)) missingFiles.add(resolved);
     }
   }
   if (missingFiles.size > 0) {
-    errors.push(`Referenced project resources are missing: ${[...missingFiles].slice(0, 10).join(", ")}${missingFiles.size > 10 ? ` and ${missingFiles.size - 10} more` : ""}.`);
+    errors.push(`Referenced project resources are missing: ${[...missingFiles].slice(0, 10).map((file) => `res://${file}`).join(", ")}${missingFiles.size > 10 ? ` and ${missingFiles.size - 10} more` : ""}.`);
     requirements.push("All referenced scenes, scripts, and assets in the source archive");
   }
 
   const enabledPlugins = projectFiles.flatMap((project) => [...(project.content ?? "").matchAll(/"res:\/\/(addons\/[^"]+\/plugin\.cfg)"/g)].map((match) => match[1]));
+  for (const pluginPath of enabledPlugins) {
+    const resolved = projectDirectory ? `${projectDirectory}/${pluginPath}` : pluginPath;
+    const pluginFile = files.find((file) => file.path === resolved);
+    const pluginContents = pluginFile?.content ?? "";
+    const nativePlugin = /\.(gdextension|gdnlib|gdns|dll|so|dylib)/i.test(pluginContents)
+      || files.some((file) => file.path.startsWith(path.posix.dirname(resolved)) && /\.(gdextension|gdnlib|gdns|dll|so|dylib)$/i.test(file.path));
+    plugins.push({
+      path: resolved,
+      status: nativePlugin ? "WEB_INCOMPATIBLE" : "UNKNOWN",
+      reason: nativePlugin ? "Plugin references native code that the Web builder cannot load." : "Plugin Web compatibility is not declared; preflight does not execute plugins."
+    });
+    if (!nativePlugin) warnings.push(`Plugin Web compatibility is unknown: ${resolved}.`);
+  }
   for (const pluginPath of enabledPlugins) {
     const resolved = projectDirectory ? `${projectDirectory}/${pluginPath}` : pluginPath;
     if (!availablePaths.has(resolved)) missingFiles.add(resolved);
@@ -251,22 +316,41 @@ export function preflightGodot(files: ProjectFile[], durationMs = 0): PreflightR
     requirements.push("A Web-compatible replacement for native extensions");
   }
   const fbxFiles = files.filter((file) => /\.fbx$/i.test(file.path));
-  const currentBuilder = builderForVersion(builderVersion);
-  if (fbxFiles.length > 0 && !currentBuilder?.supportsFbx2Gltf) {
+  if (fbxFiles.length > 0 && !selectedBuilder?.supportsFbx2Gltf) {
     errors.push(`FBX assets require the FBX2glTF converter, which is not included in the pinned builder; conversion fails in the offline sandbox: ${fbxFiles.slice(0, 5).map((file) => file.path).join(", ")}.`);
     requirements.push("Convert FBX assets to glTF/GLB before upload");
   }
 
-  if (errors.length > 0) status = unsupportedStructure ? "UNSUPPORTED" : "REQUIRES_ADAPTATION";
-  else if (warnings.length > 0) status = "SUPPORTED_WITH_WARNINGS";
+  const onlySafeAdaptationBlockers = errors.length === 0 && requirements.length === 0 && !unsupportedStructure;
+  if (!presetFile && onlySafeAdaptationBlockers) {
+    generateTemporaryWebPreset = true;
+    webExportPreset = "Game2Web Web";
+    adaptations.push("Generate temporary Web export preset in builder workspace");
+    warnings.push("No Web export preset was present; Game2Web will generate a temporary controlled preset without changing stored source.");
+  } else if (!presetFile) {
+    errors.push("No export_presets.cfg was found and automatic preset generation is not safe for this project's detected requirements.");
+    requirements.push("A valid Godot Web export preset or a project verified for temporary preset adaptation");
+  }
+
+  if (errors.length > 0) {
+    status = unsupportedStructure ? "UNSUPPORTED" : requiresBuilder ? "REQUIRES_BUILDER" : "REQUIRES_ADAPTATION";
+  } else if (warnings.length > 0 || adaptations.length > 0) status = "SUPPORTED_WITH_WARNINGS";
   const result: PreflightResult = {
     status,
     engine: "godot",
     engineVersion,
     builderVersion,
+    builderImage: selectedBuilder?.image ?? null,
+    builderDigest: selectedBuilder?.digest ?? null,
+    builderBaseImage: selectedBuilder?.baseImage ?? null,
+    builderBaseImageDigest: selectedBuilder?.baseImageDigest ?? null,
     webExportStatus,
     ...(webExportPreset ? { webExportPreset } : {}),
     ...(projectDirectory !== undefined ? { projectDirectory } : {}),
+    generateTemporaryWebPreset,
+    useCompatibilityRenderer,
+    adaptations,
+    plugins,
     missingFiles: [...missingFiles],
     warnings,
     errors,

@@ -70,6 +70,7 @@ new Worker("game-builds", async (job) => {
     }
     if (godotPreflight?.preflight) {
       await addLog(buildId, `Godot preflight ${godotPreflight.preflight.status} in ${godotPreflight.preflight.durationMs}ms`);
+      for (const adaptation of godotPreflight.preflight.adaptations) await addLog(buildId, `Temporary adaptation: ${adaptation}`);
     }
     await update(buildId, "BUILDING", providerId === "emscripten-sdl"
       ? "Provider: emscripten-sdl; Toolchain: Emscripten 3.1.74; SDL: Emscripten SDL2"
@@ -80,6 +81,11 @@ new Worker("game-builds", async (job) => {
       limits,
       ...(godotPreflight?.preflight?.webExportPreset ? { godotExportPreset: godotPreflight.preflight.webExportPreset } : {}),
       ...(godotPreflight?.preflight?.projectDirectory !== undefined ? { godotProjectDirectory: godotPreflight.preflight.projectDirectory } : {}),
+      ...(godotPreflight?.preflight ? {
+        ...(godotPreflight.preflight.builderVersion ? { godotBuilderVersion: godotPreflight.preflight.builderVersion } : {}),
+        generateTemporaryWebPreset: godotPreflight.preflight.generateTemporaryWebPreset,
+        useCompatibilityRenderer: godotPreflight.preflight.useCompatibilityRenderer
+      } : {}),
       log: (message) => void addLog(buildId, message)
     };
     await provider.build(context);

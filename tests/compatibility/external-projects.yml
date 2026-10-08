@@ -1,6 +1,7 @@
 projects:
   - id: turn-based-rpg
     repository: https://github.com/corndogit/Turn-based_RPG.git
+    commit: a5c8190278381cf4ddedd45c2958ca7f11228674
     expected_engine: godot
     expected_min_version: "4.0"
     license: MIT

@@ -1,0 +1,8 @@
+config_version=5
+
+[application]
+run/main_scene="res://scenes/BattleScene.tscn"
+config/features=PackedStringArray("4.0", "Forward Plus")
+
+[rendering]
+environment/defaults/default_clear_color=Color(0.443137, 0.470588, 0.807843, 1)

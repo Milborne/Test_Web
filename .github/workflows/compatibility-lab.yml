@@ -17,8 +17,14 @@ jobs:
       S3_ENDPOINT: http://localhost:9000
       APP_ORIGIN: http://127.0.0.1:3000
       PLAYER_ORIGIN: http://127.0.0.1:4000
+      NEXT_PUBLIC_API_URL: http://127.0.0.1:4000
+      NEXT_PUBLIC_PLAYER_ORIGIN: http://127.0.0.1:4000
+      COMPATIBILITY_PROJECTS: turn-based-rpg
+      COMPATIBILITY_REQUIRED_PROJECT: turn-based-rpg
     steps:
       - uses: actions/checkout@v4
+      - name: Verify isolated origins
+        run: test "$APP_ORIGIN" != "$PLAYER_ORIGIN"
       - uses: actions/setup-node@v4
         with:
           node-version: 22.11.0
@@ -26,7 +32,8 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: shellcheck scripts/compatibility/*.sh
-      - run: docker compose -f infra/docker-compose.yml up -d
+      - run: npx playwright install --with-deps chromium
+      - run: docker compose -f infra/docker-compose.yml up -d --wait
       - run: docker build --tag game2web/godot-builder:4.3.0 builders/godot
       - run: npx prisma db push --schema packages/database/prisma/schema.prisma
       - name: Start API, worker and web
@@ -38,6 +45,8 @@ jobs:
             if curl --fail --silent http://127.0.0.1:4000/health && curl --fail --silent http://127.0.0.1:3000; then break; fi
             sleep 1
           done
+          curl --fail --silent http://127.0.0.1:4000/health
+          curl --fail --silent http://127.0.0.1:3000 > /dev/null
       - run: npm run compatibility:lab
       - if: always()
         run: docker compose -f infra/docker-compose.yml logs --no-color > compose.log || true
@@ -49,6 +58,8 @@ jobs:
           name: compatibility-lab-report
           path: |
             tests/compatibility/reports
+            .validation/playwright-report
+            test-results
             api.log
             worker.log
             web.log

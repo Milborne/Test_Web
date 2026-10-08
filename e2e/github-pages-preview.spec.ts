@@ -42,9 +42,11 @@ test("deployed GitHub Pages preview initializes the Godot runtime", async ({ pag
   const response = await page.goto(target.toString(), { waitUntil: "domcontentloaded" });
   expect(response?.status()).toBe(200);
   await expect(page.locator("#game2web-start-overlay")).toBeVisible({ timeout: 60_000 });
-  await expect(page.getByRole("button", { name: "Play Game" })).toBeFocused();
+  const startButton = page.getByRole("button", { name: "Play Game" });
+  await page.keyboard.press("Tab");
+  await expect(startButton).toBeFocused();
   expect(await godotAudioStates(page.mainFrame())).not.toContain("running");
-  await page.getByRole("button", { name: "Play Game" }).click();
+  await page.keyboard.press("Enter");
   await expect(page.locator("#game2web-start-overlay")).toBeHidden({ timeout: 60_000 });
   await expect(page.locator("canvas")).toBeVisible({ timeout: 60_000 });
   await expect.poll(async () => page.locator("canvas").evaluate((canvas: HTMLCanvasElement) => canvas.width * canvas.height), { timeout: 60_000 }).toBeGreaterThan(0);

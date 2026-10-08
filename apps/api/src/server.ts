@@ -144,7 +144,7 @@ app.post<{ Params: { id: string }; Body: { provider?: ProviderId; mode?: "PRODUC
   }
   const admission = await prisma.$transaction(async (tx) => {
     // Serialize the count-and-create check across API instances.
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(${buildAdmissionLockKey})`;
+    await tx.$queryRaw<boolean[]>`SELECT pg_advisory_xact_lock(${buildAdmissionLockKey}) IS NULL`;
     const activeStatuses = ["QUEUED", "PREPARING", "VALIDATING", "BUILDING", "PACKAGING", "UPLOADING"] as const;
     const activeBuilds = await tx.build.count({ where: { project: { userId: user.id }, status: { in: [...activeStatuses] } } });
     if (activeBuilds >= Number(process.env.MAX_CONCURRENT_BUILDS_PER_USER ?? 2)) {

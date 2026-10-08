@@ -19,6 +19,7 @@ test("external Godot build initializes in the published player", async ({ page }
 
   const response = await page.goto(`/play/${encodeURIComponent(slug)}`, { waitUntil: "networkidle" });
   expect(response?.ok()).toBeTruthy();
+  await expect(page.locator("iframe")).toHaveAttribute("src", new RegExp(`/api/play/${slug}/?$`), { timeout: 30_000 });
   const gameFrame = page.frames().find((frame) => frame.url().includes("/api/play/"));
   expect(gameFrame, "published game iframe should be loaded").toBeTruthy();
   if (!gameFrame) return;

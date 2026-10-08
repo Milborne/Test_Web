@@ -19,7 +19,8 @@ jobs:
       PLAYER_ORIGIN: http://127.0.0.1:4000
       NEXT_PUBLIC_API_URL: http://127.0.0.1:4000
       NEXT_PUBLIC_PLAYER_ORIGIN: http://127.0.0.1:4000
-      COMPATIBILITY_PROJECTS: godot-platformer
+      COMPATIBILITY_PROJECTS: turn-based-rpg
+      COMPATIBILITY_REQUIRED_PROJECT: turn-based-rpg
     steps:
       - uses: actions/checkout@v4
       - name: Verify isolated origins

@@ -30,12 +30,18 @@ jobs:
       - run: docker compose -f infra/docker-compose.yml up -d
       - run: docker build --tag game2web/godot-builder:4.3.0 builders/godot
       - run: npx prisma db push --schema packages/database/prisma/schema.prisma
-      - name: Start API and worker
+      - name: Start API, worker and web
         run: |
           npm run dev --workspace apps/api > api.log 2>&1 &
           npm run dev --workspace apps/worker > worker.log 2>&1 &
-          for i in $(seq 1 60); do curl --fail --silent http://127.0.0.1:4000/health && break || sleep 1; done
+          npm run dev --workspace apps/web > web.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:4000/health && curl --fail --silent http://127.0.0.1:3000; then break; fi
+            sleep 1
+          done
       - run: npm run compatibility:lab
+      - if: always()
+        run: docker compose -f infra/docker-compose.yml logs --no-color > compose.log || true
       - if: always()
         run: docker compose -f infra/docker-compose.yml down -v
       - if: always()
@@ -46,4 +52,6 @@ jobs:
             tests/compatibility/reports
             api.log
             worker.log
+            web.log
+            compose.log
           if-no-files-found: warn

@@ -19,7 +19,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-fetch_metadata="$("$ROOT/scripts/compatibility/fetch-external-projects.sh" "$MANIFEST" "$WORKSPACE")"
+fetch_metadata="$(bash "$ROOT/scripts/compatibility/fetch-external-projects.sh" "$MANIFEST" "$WORKSPACE")"
 [ -f "$fetch_metadata" ]
 
 cat > "$LICENSES" <<'EOF'
@@ -138,7 +138,6 @@ while IFS=$'\t' read -r id repository commit branch license_file project_dir; do
     artifacts: $artifacts_status
     player: $player_status
     duration_seconds: $duration
-    warnings: []
     warnings: ["${warnings//\"/\\\"}"]
     errors: ["${errors//\"/\\\"}"]
 EOF

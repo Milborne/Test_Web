@@ -67,3 +67,4 @@ jobs:
             web.log
             compose.log
           if-no-files-found: warn
+          include-hidden-files: true

@@ -65,12 +65,12 @@ jobs:
           PREVIEW_URL: ${{ inputs.preview_url }}
         run: |
           mkdir -p .validation
-          printf 'Preview URL:\n%s\n' "$PREVIEW_URL" > .validation/preview-url.txt
+          printf 'PERSISTENT_PREVIEW_URL=%s\n' "$PREVIEW_URL" > .validation/preview-url.txt
       - name: Validate preview URL
         run: |
           test -s .validation/preview-url.txt
-          preview_url="$(sed -n '2p' .validation/preview-url.txt)"
-          PREVIEW_URL="$preview_url" node -e 'const u=new URL(process.env.PREVIEW_URL); if (u.protocol !== "https:" || u.hostname !== "milborne.github.io") throw new Error("Expected the real HTTPS GitHub Pages URL for this repository");'
+          preview_url="$(sed -n 's/^PERSISTENT_PREVIEW_URL=//p' .validation/preview-url.txt | head -1)"
+          PREVIEW_URL="$preview_url" node -e 'const u=new URL(process.env.PREVIEW_URL); if (u.protocol !== "https:" || u.hostname !== "milborne.github.io" || !/^\/Test_Web\/previews\/platformer-[0-9]+\/$/.test(u.pathname)) throw new Error("Expected the real HTTPS GitHub Pages Platformer preview URL for this repository");'
           echo "GITHUB_PAGES_PREVIEW_URL=$preview_url" >> "$GITHUB_ENV"
       - name: Test deployed Godot runtime in Chromium
         run: npx playwright test e2e/github-pages-preview.spec.ts --reporter=line --browser chromium

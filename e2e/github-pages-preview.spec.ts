@@ -93,6 +93,7 @@ test("deployed GitHub Pages preview initializes the Godot runtime", async ({ pag
   expect(startupReached, JSON.stringify(startupDiagnostics, null, 2)).toBe(true);
   await expect(page.locator("canvas")).toBeVisible({ timeout: 60_000 });
   await expect.poll(async () => page.locator("canvas").evaluate((canvas: HTMLCanvasElement) => canvas.width * canvas.height), { timeout: 60_000 }).toBeGreaterThan(0);
+  await page.locator("canvas").click();
   await expect.poll(() => godotAudioStates(page.mainFrame()), { timeout: 60_000 }).toContain("running");
   expect(await page.locator("html").getAttribute("data-game2web-runtime")).toBe("ready");
   expect(await page.locator("canvas").evaluate((canvas: HTMLCanvasElement) => document.activeElement === canvas)).toBe(true);
@@ -117,7 +118,6 @@ test("deployed GitHub Pages preview initializes the Godot runtime", async ({ pag
   expect(inputAudit.additionalKeyActions).toEqual([
     { file: "source/main.gd", key: "KEY_F11", behavior: "fullscreen toggle" }
   ]);
-  await page.locator("canvas").click();
   await page.keyboard.press("ArrowRight");
   await page.keyboard.press("d");
   expect((await godotKeyEvents(page.mainFrame())).slice(-2).map((event) => event.code)).toEqual(["ArrowRight", "KeyD"]);

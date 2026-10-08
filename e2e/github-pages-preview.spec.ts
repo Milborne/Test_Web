@@ -73,7 +73,12 @@ test("deployed GitHub Pages preview initializes the Godot runtime", async ({ pag
   await expect(startButton).toBeFocused();
   expect(await godotAudioStates(page.mainFrame())).not.toContain("running");
   await startButton.click();
-  await expect.poll(async () => ({
+  const startupReached = await page.waitForFunction(
+    () => document.getElementById("game2web-start-overlay")?.hidden === true,
+    null,
+    { timeout: 60_000 }
+  ).then(() => true, () => false);
+  const startupDiagnostics = {
     ...(await page.evaluate(() => ({
       overlayHidden: document.getElementById("game2web-start-overlay")?.hidden ?? false,
       buttonText: document.getElementById("game2web-start-button")?.textContent ?? null,
@@ -83,7 +88,9 @@ test("deployed GitHub Pages preview initializes the Godot runtime", async ({ pag
     pageErrors: runtimeErrors,
     audio: await godotAudioDiagnostics(page.mainFrame()),
     unhandledRejections: await godotUnhandledRejections(page.mainFrame())
-  }), { timeout: 60_000 }).toMatchObject({ overlayHidden: true });
+  };
+  console.log(`Persistent preview startup diagnostics: ${JSON.stringify(startupDiagnostics)}`);
+  expect(startupReached, JSON.stringify(startupDiagnostics, null, 2)).toBe(true);
   await expect(page.locator("canvas")).toBeVisible({ timeout: 60_000 });
   await expect.poll(async () => page.locator("canvas").evaluate((canvas: HTMLCanvasElement) => canvas.width * canvas.height), { timeout: 60_000 }).toBeGreaterThan(0);
   await expect.poll(() => godotAudioStates(page.mainFrame()), { timeout: 60_000 }).toContain("running");

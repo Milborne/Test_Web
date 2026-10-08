@@ -36,7 +36,6 @@ jobs:
       - run: shellcheck scripts/compatibility/*.sh
       - run: npx playwright install --with-deps chromium
       - run: docker compose -f infra/docker-compose.yml up -d --wait
-      - run: docker build --file builders/godot/Dockerfile --tag game2web/godot-builder:4.3.0 .
       - run: docker build --file builders/godot-4.4/Dockerfile --tag game2web/godot-builder:4.4.0 .
       - run: npx prisma db push --schema packages/database/prisma/schema.prisma
       - name: Start API, worker and web

@@ -36,7 +36,6 @@ run_stage "Lint" npm run lint
 run_stage "Unit tests" npm test
 run_stage "Workspace build" npm run build
 run_stage "Godot 4.3 builder image" docker build --file "$ROOT/builders/godot/Dockerfile" --tag game2web/godot-builder:4.3.0 "$ROOT"
-run_stage "Godot 4.4 builder image" docker build --file "$ROOT/builders/godot-4.4/Dockerfile" --tag game2web/godot-builder:4.4.0 "$ROOT"
 run_stage "Emscripten builder image" docker build --tag "game2web/emscripten-builder:${EMSCRIPTEN_VERSION:-3.1.74}" "$ROOT/builders/emscripten"
 run_stage "Database migrations" npx prisma db push --schema "$ROOT/packages/database/prisma/schema.prisma"
 

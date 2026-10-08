@@ -34,7 +34,9 @@ while IFS=$'\t' read -r id repository requested_commit; do
   verified="$(git -C "$project_dir" rev-parse HEAD)"
   [ "$commit" = "$verified" ]
   branch="$(git -C "$project_dir" branch --show-current)"
-  license_file="$(find "$project_dir" -maxdepth 2 -type f \( -iname 'license' -o -iname 'license.*' -o -iname 'copying' -o -iname 'copying.*' \) -print -quit | sed "s#^$project_dir/##" || true)"
+  [ -n "$branch" ] || branch="detached"
+  license_file="$(find "$project_dir" -maxdepth 2 -type f \( -iname 'license' -o -iname 'license.*' -o -iname 'copying' -o -iname 'copying.*' \) -print -quit | sed "s#^$project_dir/##")"
+  [ -n "$license_file" ] || license_file="not-found"
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$repository" "$commit" "$branch" "$license_file" "$project_dir" >> "$METADATA"
 done < <(awk '
   function emit() {

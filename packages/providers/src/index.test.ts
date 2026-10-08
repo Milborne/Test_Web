@@ -64,8 +64,15 @@ test("rejects projects without a detectable Godot version instead of selecting a
   assert.equal(result.builderImage, null);
 });
 
-test("generates a temporary Web preset for a safe Godot 2D project", async () => {
+test("requires project changes when an existing export file has no Web preset", async () => {
   const result = preflightGodot(await fixture("missing-web-preset"));
+  assert.equal(result.status, "REQUIRES_ADAPTATION");
+  assert.equal(result.webExportStatus, "WEB_EXPORT_INVALID");
+  assert.match(result.errors.join(" "), /no valid Web platform preset/);
+});
+
+test("generates a temporary Web preset when a safe Godot 2D project has no export file", async () => {
+  const result = preflightGodot(await fixture("no-export-presets"));
   assert.equal(result.status, "SUPPORTED_WITH_WARNINGS");
   assert.equal(result.webExportStatus, "WEB_EXPORT_MISSING");
   assert.equal(result.generateTemporaryWebPreset, true);

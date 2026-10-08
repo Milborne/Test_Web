@@ -65,7 +65,7 @@ while IFS=$'\t' read -r id repository commit branch license_file project_dir; do
   project_report="$REPORT_ROOT/$id"
   mkdir -p "$project_report"
   license_text="not-found"
-  [ -n "$license_file" ] && license_text="$(head -1 "$project_dir/$license_file" | tr -d '\r' || true)"
+  [ "$license_file" = "not-found" ] || license_text="$(head -1 "$project_dir/$license_file" | tr -d '\r')"
   printf '%s\n' "| $id | $repository | \`$commit\` | $license_text | See upstream | Not published automatically |" >> "$LICENSES"
 
   source_archive="$WORKSPACE/$id-source.zip"

@@ -62,6 +62,8 @@ test("external Godot preview initializes in the temporary player", async ({ page
 
   const auditPath = process.env.GODOT_INPUT_AUDIT_PATH ?? "tests/compatibility/reports/godot-platformer/input-audit.json";
   const inputAudit = JSON.parse(await readFile(auditPath, "utf8"));
+  expect(inputAudit.commit).toBe("6944ec4c323dcbad470ff7654fec665f010f50d1");
+  expect(inputAudit.godotVersion).toBe("4.4");
   expect(inputAudit.movement.method).toBe("Input.get_vector");
   expect(inputAudit.movement.actions).toEqual(["ui_left", "ui_right", "ui_down", "ui_up"]);
   const movementKeys = new Set<string>(inputAudit.movement.controls.flatMap((control: { keys: string[] }) => control.keys));

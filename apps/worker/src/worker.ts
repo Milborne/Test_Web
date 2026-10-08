@@ -1,7 +1,7 @@
 import { Worker } from "bullmq";
 import { PrismaClient } from "@prisma/client";
 import AdmZip from "adm-zip";
-import { providers, readGodotProjectFiles, validateArtifacts } from "@game2web/providers";
+import { addGodotUserGestureAudioGate, providers, readGodotProjectFiles, validateArtifacts } from "@game2web/providers";
 import type { BuildContext, ProviderId } from "@game2web/shared";
 import { deleteObject, getObject, putObject } from "@game2web/storage";
 import { createDeploymentProvider } from "@game2web/deployment";
@@ -101,8 +101,18 @@ new Worker("game-builds", async (job) => {
       log: (message) => void addLog(buildId, message)
     };
     await provider.build(context);
-    await update(buildId, "PACKAGING", "Collecting and validating generated artifacts");
     const paths = await provider.collectArtifacts(outputDirectory);
+    await validateArtifacts(outputDirectory, paths);
+    if (providerId === "godot") {
+      const indexPath = path.join(outputDirectory, "index.html");
+      const html = await readFile(indexPath, "utf8");
+      const bootstrappedHtml = addGodotUserGestureAudioGate(html);
+      if (bootstrappedHtml !== html) {
+        await writeFile(indexPath, bootstrappedHtml);
+        await addLog(buildId, "Added Game2Web user-gesture gate to the Godot Web export shell");
+      }
+    }
+    await update(buildId, "PACKAGING", "Collecting and validating generated artifacts");
     const artifacts = await validateArtifacts(outputDirectory, paths);
     if (artifacts.reduce((total, artifact) => total + artifact.size, 0) > limits.maxDiskMb * 1024 * 1024) {
       throw new Error("Build artifacts exceed configured disk limit");

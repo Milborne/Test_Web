@@ -56,6 +56,94 @@ export interface BuildProvider {
   collectArtifacts(outputDirectory: string): Promise<string[]>;
 }
 
+const GODOT_STARTUP_PATTERN = /engine\.startGame\(\{[\s\S]*?\}\)\.then\(\(\) => \{\s*setStatusMode\('hidden'\);\s*\}, displayFailureNotice\);/g;
+
+export function addGodotUserGestureAudioGate(html: string): string {
+  if (html.includes("id=\"game2web-start-overlay\"")) {
+    const handlerIndex = html.indexOf("game2webStartButton.addEventListener('click'");
+    const startupIndex = html.indexOf("engine.startGame(");
+    if (handlerIndex < 0 || startupIndex < handlerIndex || (html.match(/engine\.startGame\(/g) ?? []).length !== 1) {
+      throw new Error("Godot Web export contains a conflicting start overlay; refusing to publish without a verified user-gesture audio gate");
+    }
+    return html;
+  }
+  if (!html.includes("new Engine(GODOT_CONFIG)")) {
+    throw new Error("Godot Web export is missing the expected Engine startup shell; refusing to publish without the user-gesture audio gate");
+  }
+  const matches = [...html.matchAll(GODOT_STARTUP_PATTERN)];
+  if (matches.length !== 1 || !html.includes("</head>") || !html.includes('<script src="index.js"></script>')) {
+    throw new Error("Godot Web export shell does not match the supported startup structure; refusing to publish without the user-gesture audio gate");
+  }
+
+  const startup = matches[0][0];
+  const monitoredStartup = startup
+    .replace(
+      /setStatusMode\('hidden'\);/,
+      `setStatusMode('hidden');
+    game2webStartOverlay.hidden = true;
+    document.documentElement.dataset.game2webRuntime = 'ready';
+    const game2webCanvas = document.getElementById('canvas');
+    game2webCanvas.tabIndex = 0;
+    game2webCanvas.focus({ preventScroll: true });`
+    )
+    .replace(
+      /,\s*displayFailureNotice\);$/,
+      `, (error) => {
+    game2webStartButton.disabled = true;
+    game2webStartButton.textContent = 'Unable to start';
+    document.getElementById('game2web-audio-status').textContent = 'The game could not start. Reload this page and try again.';
+    displayFailureNotice(error);
+  });`
+    );
+  const gatedStartup = `const game2webStartOverlay = document.getElementById('game2web-start-overlay');
+const game2webStartButton = document.getElementById('game2web-start-button');
+if (window.matchMedia('(pointer: fine)').matches) game2webStartButton.focus({ preventScroll: true });
+game2webStartOverlay.addEventListener('keydown', (event) => {
+  if (event.key === 'Tab') {
+    event.preventDefault();
+    game2webStartButton.focus();
+  }
+});
+game2webStartButton.addEventListener('click', () => {
+  game2webStartButton.disabled = true;
+  game2webStartButton.textContent = 'Starting…';
+  document.getElementById('game2web-audio-status').textContent = 'Starting game and audio…';
+  setStatusMode('progress');
+  ${monitoredStartup}
+}, { once: true });`;
+
+  const htmlWithOverlay = html
+    .replace("</head>", `${godotStartOverlayStyles}</head>`)
+    .replace(
+      '<script src="index.js"></script>',
+      `<section id="game2web-start-overlay" class="game2web-start-overlay" role="dialog" aria-modal="true" aria-labelledby="game2web-start-title" aria-describedby="game2web-audio-status">
+  <div class="game2web-start-card">
+    <p class="game2web-start-brand">GAME2WEB</p>
+    <h1 id="game2web-start-title">Ready to play?</h1>
+    <button id="game2web-start-button" type="button">Play Game</button>
+    <p id="game2web-audio-status" role="status">Use the Play Game button to start with audio. Keyboard users can press Tab, then Enter or Space.</p>
+  </div>
+</section>
+<script src="index.js"></script>`
+    );
+  return htmlWithOverlay.replace(startup, gatedStartup);
+}
+
+const godotStartOverlayStyles = `<style id="game2web-start-overlay-styles">
+.game2web-start-overlay { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left)); background: rgba(8, 10, 12, .94); color: #edf2f7; font: 16px/1.5 Arial, Helvetica, sans-serif; text-align: center; touch-action: manipulation; }
+.game2web-start-overlay[hidden] { display: none; }
+.game2web-start-card { width: min(100%, 420px); padding: 32px; border: 1px solid #27303a; background: #12161b; }
+.game2web-start-brand { color: #a4ff4f; font-size: 12px; font-weight: 700; letter-spacing: .18em; }
+.game2web-start-card h1 { margin: 14px 0 24px; font-size: clamp(28px, 6vw, 42px); }
+#game2web-start-button { min-width: 180px; border: 0; border-radius: 4px; padding: 14px 20px; background: #a4ff4f; color: #10140c; font: inherit; font-weight: 700; cursor: pointer; }
+#game2web-start-button:hover:not(:disabled) { background: #b8ff7a; }
+#game2web-start-button:focus-visible { outline: 3px solid #fff; outline-offset: 4px; }
+#game2web-start-button:disabled { cursor: wait; opacity: .75; }
+#game2web-audio-status { margin: 20px 0 0; color: #c4cbd2; }
+@media (max-width: 480px) { .game2web-start-card { padding: 24px 18px; } }
+@media (prefers-reduced-motion: reduce) { .game2web-start-overlay * { scroll-behavior: auto; } }
+</style>`;
+
 const has = (files: ProjectFile[], name: string) => files.some((file) => file.path === name || file.path.endsWith(`/${name}`));
 
 export class EmscriptenSdlProvider implements BuildProvider {
@@ -114,9 +202,10 @@ export class GodotProvider implements BuildProvider {
     if (!context.godotExportPreset) throw new Error("Godot Web export was not preflighted; no build was started");
     const builder = context.godotBuilderVersion ? builderForVersion(context.godotBuilderVersion) : undefined;
     if (!builder) throw new Error("No compatible Godot builder is configured; no build was started");
+    const builderUid = typeof process.getuid === "function" && process.getuid() > 0 ? process.getuid() : 1000;
     context.log("Starting isolated Godot Web exporter");
     try {
-      const result = await execFileAsync("docker", ["run", "--rm", "--network=none", "--cap-drop=ALL", "--security-opt", "no-new-privileges:true", "--pids-limit", String(context.limits.maxPids), "--cpus", String(context.limits.maxCpus), "--memory", `${context.limits.maxMemoryMb}m`, "--user", "1000:1000", "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=512m", "-e", `GODOT_EXPORT_PRESET=${context.godotExportPreset}`, "-e", `GODOT_PROJECT_DIRECTORY=${context.godotProjectDirectory ?? ""}`, "-e", `GODOT_GENERATE_WEB_PRESET=${context.generateTemporaryWebPreset ? "1" : "0"}`, "-e", `GODOT_USE_COMPATIBILITY_RENDERER=${context.useCompatibilityRenderer ? "1" : "0"}`, "-v", `${context.sourceDirectory}:/src:ro`, "-v", `${context.outputDirectory}:/out`, builder.image], { timeout: context.limits.maxBuildMinutes * 60_000 });
+      const result = await execFileAsync("docker", ["run", "--rm", "--network=none", "--cap-drop=ALL", "--security-opt", "no-new-privileges:true", "--pids-limit", String(context.limits.maxPids), "--cpus", String(context.limits.maxCpus), "--memory", `${context.limits.maxMemoryMb}m`, "--user", `${builderUid}:1000`, "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=512m", "-e", `GODOT_EXPORT_PRESET=${context.godotExportPreset}`, "-e", `GODOT_PROJECT_DIRECTORY=${context.godotProjectDirectory ?? ""}`, "-e", `GODOT_GENERATE_WEB_PRESET=${context.generateTemporaryWebPreset ? "1" : "0"}`, "-e", `GODOT_USE_COMPATIBILITY_RENDERER=${context.useCompatibilityRenderer ? "1" : "0"}`, "-v", `${context.sourceDirectory}:/src:ro`, "-v", `${context.outputDirectory}:/out`, builder.image], { timeout: context.limits.maxBuildMinutes * 60_000 });
       context.log(result.stdout);
     } catch (error) {
       const output = error as { stdout?: string; stderr?: string };

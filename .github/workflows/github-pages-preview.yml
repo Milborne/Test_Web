@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -32,7 +33,7 @@ jobs:
       COMPATIBILITY_LAB: "true"
       COMPATIBILITY_PROJECTS: godot-platformer
       COMPATIBILITY_REQUIRED_PROJECT: godot-platformer
-      PAGES_PREVIEW_DIR: .validation/pages-site
+      PAGES_PREVIEW_DIR: .validation/pages-new
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -40,6 +41,19 @@ jobs:
           node-version: 22.11.0
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: Preserve the currently deployed Pages site
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p .validation/previous-pages .validation/previous-site
+          previous_run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow github-pages-preview.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
+          test -n "$previous_run_id" || { echo "No completed Pages deployment is available to preserve"; exit 1; }
+          gh run download "$previous_run_id" --name github-pages --dir .validation/previous-pages
+          test -s .validation/previous-pages/artifact.tar
+          tar -xf .validation/previous-pages/artifact.tar -C .validation/previous-site
+          test -s .validation/previous-site/index.html
+          find .validation/previous-site -type f -name '*.wasm' -print -quit | grep -q .
+          find .validation/previous-site -type f -name '*.js' -print -quit | grep -q .
       - name: Typecheck
         run: npm run typecheck
       - name: Lint
@@ -75,12 +89,28 @@ jobs:
           curl --fail --silent http://127.0.0.1:3000 > /dev/null
       - name: Run real Godot build and validate static artifacts
         run: npm run compatibility:lab
+      - name: Preserve previous Pages site and add this Platformer preview
+        if: success()
+        run: |
+          preview_directory=".validation/pages-site/previews/platformer-$GITHUB_RUN_ID"
+          mkdir -p .validation/pages-site "$preview_directory"
+          cp -a .validation/previous-site/. .validation/pages-site/
+          cp -a .validation/pages-new/. "$preview_directory/"
+      - name: Preserve Platformer input audit
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: github-pages-preview-input-audit
+          path: tests/compatibility/reports/godot-platformer/input-audit.json
+          if-no-files-found: warn
       - name: Validate Pages site contents
         if: success()
         run: |
           test -s .validation/pages-site/index.html
-          find .validation/pages-site -type f -name '*.wasm' -print -quit | grep -q .
-          find .validation/pages-site -type f -name '*.js' -print -quit | grep -q .
+          preview_directory=".validation/pages-site/previews/platformer-$GITHUB_RUN_ID"
+          test -s "$preview_directory/index.html"
+          find "$preview_directory" -type f -name '*.wasm' -print -quit | grep -q .
+          find "$preview_directory" -type f -name '*.js' -print -quit | grep -q .
           if find .validation/pages-site -type f \( -name '*.zip' -o -name '*.log' -o -name '.env*' \) -print -quit | grep -q .; then
             echo "Refusing to publish source archives, logs, or environment files"
             exit 1
@@ -142,8 +172,13 @@ jobs:
         run: |
           test -n "$PAGE_URL" || { echo "PREVIEW_DEPLOYMENT_FAILED: deploy-pages returned no page_url"; exit 1; }
           node -e 'const u=new URL(process.env.PAGE_URL); if (u.protocol !== "https:" || u.hostname !== "milborne.github.io") throw new Error("Unexpected GitHub Pages URL");'
+          preview_url="${PAGE_URL%/}/previews/platformer-$GITHUB_RUN_ID/"
           for i in $(seq 1 30); do
-            if curl --fail --silent --show-error "$PAGE_URL" -o /dev/null; then exit 0; fi
+            if curl --fail --silent --show-error "$PAGE_URL" -o /dev/null && curl --fail --silent --show-error "$preview_url" -o /dev/null; then
+              curl --fail --silent --show-error "${preview_url}index.wasm" -o /dev/null
+              curl --fail --silent --show-error "${preview_url}index.js" -o /dev/null
+              exit 0
+            fi
             sleep 10
           done
           echo "PREVIEW_DEPLOYMENT_FAILED: GitHub Pages URL did not become reachable"
@@ -153,9 +188,9 @@ jobs:
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
         run: |
           mkdir -p .validation
+          preview_url="${PAGE_URL%/}/previews/platformer-$GITHUB_RUN_ID/"
           {
-            echo "Preview URL:"
-            echo "$PAGE_URL"
+            echo "PERSISTENT_PREVIEW_URL=$preview_url"
             echo "Deployment run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
             echo "Created: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "Retention: until the next GitHub Pages deployment or Pages is disabled; no automatic expiry is configured."
@@ -163,11 +198,13 @@ jobs:
           {
             echo "## Game2Web Preview deployed"
             echo
-            echo "**URL:** [$PAGE_URL]($PAGE_URL)"
+            echo "PERSISTENT_PREVIEW_URL=$preview_url"
+            echo
+            echo "**URL:** [$preview_url]($preview_url)"
             echo
             echo "The URL comes directly from \`steps.deployment.outputs.page_url\`. GitHub Pages serves this site publicly; it is not an owner-authenticated preview."
             echo
-            echo "A separate workflow will run browser/runtime checks after this deployment workflow completes."
+            echo "The previous Pages site was preserved. A separate workflow will run browser/runtime checks after this deployment workflow and its runner teardown."
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Preserve preview URL and deployment metadata
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

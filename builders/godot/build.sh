@@ -74,3 +74,10 @@ mkdir -p /out
 godot --headless --editor --path "$project_dir" --import
 godot --headless --path "$project_dir" --export-release "$GODOT_EXPORT_PRESET" /out/index.html
 test -s /out/index.html
+find /out -mindepth 1 -type d -exec chmod 755 {} +
+find /out -type f -exec chmod 644 {} +
+chmod 644 /out/index.html
+if [ ! -r /out/index.html ]; then
+  ls -ldn /out /out/index.html >&2
+  exit 1
+fi

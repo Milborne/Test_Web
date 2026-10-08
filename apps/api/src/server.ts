@@ -162,7 +162,7 @@ app.post<{ Params: { id: string }; Body: { provider?: ProviderId; mode?: "PRODUC
     const build = await tx.build.create({ data: { projectId: project.id, provider: report.provider, status: "QUEUED", mode } });
     return { build } as const;
   });
-  if ("status" in admission) return reply.code(admission.status).send({ error: admission.error });
+  if ("error" in admission) return reply.code(admission.status).send({ error: admission.error });
   const { build } = admission;
   await queue.add(build.id, {
     buildId: build.id,

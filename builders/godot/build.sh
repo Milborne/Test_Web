@@ -2,8 +2,9 @@
 set -eu
 mkdir -p /tmp/project
 mkdir -p "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME"
-mkdir -p "$XDG_DATA_HOME/godot/export_templates/4.3.stable"
-cp /opt/godot-templates/templates/web_*.zip "$XDG_DATA_HOME/godot/export_templates/4.3.stable/"
+template_version="${GODOT_TEMPLATE_VERSION:-4.3}"
+mkdir -p "$XDG_DATA_HOME/godot/export_templates/$template_version.stable"
+cp /opt/godot-templates/templates/web_*.zip "$XDG_DATA_HOME/godot/export_templates/$template_version.stable/"
 cp -R /src/. /tmp/project/
 if [ -n "${GODOT_PROJECT_DIRECTORY:-}" ]; then
   project_dir="/tmp/project/$GODOT_PROJECT_DIRECTORY"

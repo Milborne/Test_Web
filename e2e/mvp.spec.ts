@@ -2,19 +2,30 @@ import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import AdmZip from "adm-zip";
+import { PrismaClient } from "@prisma/client";
 
 const api = "http://127.0.0.1:4000";
 const appOrigin = process.env.APP_ORIGIN ?? "http://localhost:3000";
 const playerOrigin = process.env.PLAYER_ORIGIN ?? "http://localhost:4000";
+const prisma = new PrismaClient();
 
-test("Godot upload, build, deployment and player", async ({ page, request }) => {
+test("Godot upload, build, deployment and player", async ({ page, request, playwright }) => {
+  const browserErrors: string[] = [];
+  const wasmResponses: string[] = [];
+  const javascriptResponses: string[] = [];
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+  page.on("console", (message) => { if (message.type() === "error") browserErrors.push(message.text()); });
+  page.on("response", (response) => {
+    if (response.ok() && /\.wasm(?:$|\?)/i.test(response.url())) wasmResponses.push(response.url());
+    if (response.ok() && /\.js(?:$|\?)/i.test(response.url())) javascriptResponses.push(response.url());
+  });
   const email = `e2e-${Date.now()}@example.test`;
   const auth = await request.post(`${api}/api/auth/register`, { data: { email, password: "correct horse battery" } });
   expect(auth.ok()).toBeTruthy();
   const csrf = auth.headers()["set-cookie"].match(/game2web_csrf=([^;]+)/)?.[1] ?? "";
   const headers = { "x-csrf-token": csrf };
   const archive = await readFile("examples/godot-demo.zip");
-  const projectResponse = await request.post(`${api}/api/projects`, { headers, multipart: { name: "godot-demo", archive: { name: "godot-demo.zip", mimeType: "application/zip", buffer: archive } } });
+  const projectResponse = await request.post(`${api}/api/projects`, { headers, multipart: { name: "godot-demo", redistributionStatus: "REDISTRIBUTION_CLEARED", archive: { name: "godot-demo.zip", mimeType: "application/zip", buffer: archive } } });
   expect(projectResponse.ok()).toBeTruthy();
   const created = await projectResponse.json();
   expect(created.compatibility.provider).toBe("godot");
@@ -42,6 +53,65 @@ test("Godot upload, build, deployment and player", async ({ page, request }) => 
   await expect(page.locator("iframe")).toBeVisible();
   const frame = page.frameLocator("iframe");
   await expect(frame.locator("canvas")).toBeVisible({ timeout: 30_000 });
+
+  const previewBuildResponse = await request.post(`${api}/api/projects/${created.project.id}/builds`, { headers, data: { mode: "PREVIEW" } });
+  expect(previewBuildResponse.status()).toBe(202);
+  const previewBuild = await previewBuildResponse.json();
+  await expect.poll(async () => {
+    const status = await (await request.get(`${api}/api/builds/${previewBuild.id}`)).json();
+    if (status.status === "FAILED") throw new Error(status.error ?? "Preview build failed without an error message");
+    return status.status;
+  }, { timeout: 150_000 }).toBe("READY");
+  const previewResponse = await request.post(`${api}/api/builds/${previewBuild.id}/previews`, { headers, data: {} });
+  expect(previewResponse.status()).toBe(201);
+  const preview = await previewResponse.json();
+  expect(preview.persistent).toBe(false);
+  expect(preview.expiresAt).toBeTruthy();
+  const previewIndex = await request.get(`${api}/api/preview/${new URL(preview.url).pathname.split("/").at(-1)}/`);
+  expect(previewIndex.ok()).toBeTruthy();
+  expect(previewIndex.headers()["cache-control"]).toContain("no-store");
+  browserErrors.length = 0;
+  wasmResponses.length = 0;
+  javascriptResponses.length = 0;
+  await page.goto(preview.url);
+  const previewFrame = page.frameLocator("iframe");
+  await expect(previewFrame.locator("canvas")).toBeVisible({ timeout: 30_000 });
+  await expect.poll(() => wasmResponses.length, { timeout: 30_000 }).toBeGreaterThan(0);
+  await expect.poll(() => javascriptResponses.length, { timeout: 30_000 }).toBeGreaterThan(0);
+  expect(browserErrors).toEqual([]);
+
+  const otherUser = await playwright.request.newContext();
+  const otherAuth = await otherUser.post(`${api}/api/auth/register`, { data: { email: `preview-other-${Date.now()}@example.test`, password: "correct horse battery" } });
+  const otherCsrf = otherAuth.headers()["set-cookie"].match(/game2web_csrf=([^;]+)/)?.[1] ?? "";
+  expect((await otherUser.delete(`${api}/api/previews/${preview.id}`, { headers: { "x-csrf-token": otherCsrf } })).status()).toBe(404);
+  await otherUser.dispose();
+  expect((await request.delete(`${api}/api/previews/${preview.id}`, { headers })).status()).toBe(204);
+  expect((await request.get(`${api}/api/preview/${new URL(preview.url).pathname.split("/").at(-1)}/`)).status()).toBe(404);
+
+  const expiringResponse = await request.post(`${api}/api/builds/${previewBuild.id}/previews`, { headers, data: {} });
+  expect(expiringResponse.status()).toBe(201);
+  const expiringPreview = await expiringResponse.json();
+  await prisma.previewDeployment.update({ where: { id: expiringPreview.id }, data: { expiresAt: new Date(Date.now() - 1000) } });
+  const expiringToken = new URL(expiringPreview.url).pathname.split("/").at(-1);
+  expect((await request.get(`${api}/api/preview/${expiringToken}/`)).status()).toBe(404);
+  await expect.poll(async () => prisma.previewDeployment.findUnique({ where: { id: expiringPreview.id } }), { timeout: 15_000 }).toBeNull();
+});
+
+test("production builds require explicit redistribution clearance", async ({ request }) => {
+  const auth = await request.post(`${api}/api/auth/register`, { data: { email: `license-${Date.now()}@example.test`, password: "correct horse battery" } });
+  expect(auth.ok()).toBeTruthy();
+  const csrf = auth.headers()["set-cookie"].match(/game2web_csrf=([^;]+)/)?.[1] ?? "";
+  const archive = await readFile("examples/godot-demo.zip");
+  const uploaded = await request.post(`${api}/api/projects`, {
+    headers: { "x-csrf-token": csrf },
+    multipart: { name: "license-review", archive: { name: "godot-demo.zip", mimeType: "application/zip", buffer: archive } }
+  });
+  expect(uploaded.ok()).toBeTruthy();
+  const project = await uploaded.json();
+  expect(project.project.redistributionStatus).toBe("LICENSE_REVIEW_REQUIRED");
+  const response = await request.post(`${api}/api/projects/${project.project.id}/builds`, { headers: { "x-csrf-token": csrf }, data: {} });
+  expect(response.status()).toBe(403);
+  expect((await response.json()).error).toContain("explicit redistribution license clearance");
 });
 
 test("Godot preflight rejects unsupported projects before queueing a build", async ({ request }) => {
@@ -76,7 +146,7 @@ test("SDL upload, Emscripten build, deployment and player", async ({ page, playw
   expect(auth.ok()).toBeTruthy();
   const csrf = auth.headers()["set-cookie"].match(/game2web_csrf=([^;]+)/)?.[1] ?? "";
   const archive = await readFile("examples/sdl-demo.zip");
-  const projectResponse = await request.post(`${api}/api/projects`, { headers: { "x-csrf-token": csrf }, multipart: { name: "sdl-demo", archive: { name: "sdl-demo.zip", mimeType: "application/zip", buffer: archive } } });
+  const projectResponse = await request.post(`${api}/api/projects`, { headers: { "x-csrf-token": csrf }, multipart: { name: "sdl-demo", redistributionStatus: "REDISTRIBUTION_CLEARED", archive: { name: "sdl-demo.zip", mimeType: "application/zip", buffer: archive } } });
   expect(projectResponse.ok()).toBeTruthy();
   const created = await projectResponse.json();
   expect(created.compatibility.provider).toBe("emscripten-sdl");
@@ -147,7 +217,7 @@ test("private project access is isolated between users", async ({ playwright }) 
   await userB.dispose();
 });
 
-test("M7 origin and public access boundaries are enforced", async ({ playwright }) => {
+test("M7 origin and public access boundaries are enforced", async ({ playwright, page }) => {
   const request = await playwright.request.newContext();
   const allowed = await request.get(`${api}/api/auth/me`, { headers: { Origin: appOrigin } });
   expect(allowed.status()).toBe(401);
@@ -171,6 +241,24 @@ test("M7 origin and public access boundaries are enforced", async ({ playwright 
   expect(setCookie).toMatch(/game2web_session=/);
   expect(setCookie).toMatch(/game2web_csrf=/);
 
+  await page.context().addCookies([
+    { name: "game2web_session", value: "app-origin-session-only", url: "http://127.0.0.1:4000", httpOnly: true, sameSite: "Lax" },
+    { name: "game2web_csrf", value: "app-origin-csrf-only", url: "http://127.0.0.1:4000", sameSite: "Lax" }
+  ]);
+  let playerCookieHeader = "";
+  let playerRequestObserved = false;
+  await page.route(`${playerOrigin}/api/**`, async (route) => {
+    const browserRequest = route.request();
+    if (browserRequest.url().startsWith(`${playerOrigin}/api/`)) {
+      playerRequestObserved = true;
+      playerCookieHeader = (await browserRequest.allHeaders()).cookie ?? "";
+    }
+    await route.continue();
+  });
+  await page.goto(`${playerOrigin}/api/auth/me`);
+  expect(playerRequestObserved).toBe(true);
+  expect(playerCookieHeader).not.toMatch(/game2web_(?:session|csrf)=/);
+
   const anonymous = await playwright.request.newContext();
   const privateResponse = await anonymous.get(`${api}/api/projects`, { headers: { Origin: playerOrigin } });
   expect(privateResponse.status()).toBe(401);
@@ -189,7 +277,7 @@ test("M7 build admission limits active builds per user", async ({ request }) => 
   const archive = await readFile("examples/godot-demo.zip");
   const projectResponse = await request.post(`${api}/api/projects`, {
     headers: { "x-csrf-token": csrf },
-    multipart: { name: "concurrency", archive: { name: "godot-demo.zip", mimeType: "application/zip", buffer: archive } }
+    multipart: { name: "concurrency", redistributionStatus: "REDISTRIBUTION_CLEARED", archive: { name: "godot-demo.zip", mimeType: "application/zip", buffer: archive } }
   });
   expect(projectResponse.ok()).toBeTruthy();
   const project = await projectResponse.json();

@@ -19,6 +19,16 @@ enum BuildStatus {
   CANCELLED
 }
 
+enum BuildMode {
+  PRODUCTION
+  PREVIEW
+}
+
+enum RedistributionStatus {
+  LICENSE_REVIEW_REQUIRED
+  REDISTRIBUTION_CLEARED
+}
+
 model User {
   id           String    @id @default(cuid())
   email        String    @unique
@@ -50,6 +60,8 @@ model Project {
   files       ProjectFile[]
   builds      Build[]
   deployments Deployment[]
+  previews    PreviewDeployment[]
+  redistributionStatus RedistributionStatus @default(LICENSE_REVIEW_REQUIRED)
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
@@ -81,6 +93,8 @@ model Build {
   logs        BuildLog[]
   artifacts   Artifact[]
   deployment  Deployment?
+  preview     PreviewDeployment?
+  mode        BuildMode     @default(PRODUCTION)
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
@@ -115,7 +129,7 @@ model Deployment {
   id              String   @id @default(cuid())
   projectId       String
   project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  buildId         String   @unique
+  buildId       String   @unique
   build           Build    @relation(fields: [buildId], references: [id])
   slug            String   @unique
   version         Int
@@ -125,4 +139,20 @@ model Deployment {
   updatedAt       DateTime @updatedAt
 
   @@index([projectId, createdAt])
+}
+
+model PreviewDeployment {
+  id            String   @id @default(cuid())
+  projectId     String
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  buildId       String   @unique
+  build         Build    @relation(fields: [buildId], references: [id], onDelete: Cascade)
+  tokenHash     String   @unique
+  storagePrefix String   @unique
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  createdAt     DateTime @default(now())
+
+  @@index([projectId, expiresAt])
+  @@index([expiresAt, revokedAt])
 }

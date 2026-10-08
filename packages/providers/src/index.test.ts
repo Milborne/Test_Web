@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import path from "node:path";
-import { detectProject, GODOT_BUILDER_REGISTRY, preflightGodot, readGodotProjectFiles, selectGodotBuilder } from "./index.js";
+import { detectProject, extractGodotResourceReferences, GODOT_BUILDER_REGISTRY, preflightGodot, readGodotProjectFiles, selectGodotBuilder } from "./index.js";
 
 test("detects the Godot demo deterministically", () => {
   const result = detectProject([{ path: "project.godot", size: 400 }, { path: "scenes/main.tscn", size: 1200 }]);
@@ -49,12 +49,13 @@ test("rejects Godot 3 projects before building", async () => {
   assert.match(result.errors.join(" "), /supports Godot 4\.x/);
 });
 
-test("rejects projects that require a different Godot builder version", async () => {
+test("selects the Godot 4.4 builder for a matching project", async () => {
   const result = preflightGodot(await fixture("version-mismatch"));
-  assert.equal(result.status, "REQUIRES_BUILDER");
+  assert.equal(result.status, "SUPPORTED");
   assert.equal(result.engineVersion?.raw, "4.4");
-  assert.match(result.errors.join(" "), /no explicitly compatible Game2Web builder/);
-  assert.equal(result.builderImage, null);
+  assert.equal(result.builderVersion, "4.4");
+  assert.equal(result.builderImage, "game2web/godot-builder:4.4.0");
+  assert.equal(result.webExportPreset, "HTML5");
 });
 
 test("rejects projects without a detectable Godot version instead of selecting a fallback builder", () => {
@@ -92,6 +93,40 @@ test("detects missing resource references before building", async () => {
   assert.deepEqual(result.missingFiles, ["art/missing.png"]);
 });
 
+test("extracts quoted resource paths without truncating spaces or punctuation", () => {
+  assert.deepEqual(extractGodotResourceReferences([
+    String.raw`preload("res://folder/file.tres")`,
+    String.raw`preload("res://Some Folder/file.tres")`,
+    String.raw`preload("res://Some Folder/My Asset (1).tres")`,
+    String.raw`preload("res://folder/escaped\ name.tres")`,
+    String.raw`preload("res://folder/quoted\"name.tres")`,
+    String.raw`res://folder/unquoted\ path(My Asset).tres`,
+    'var first = "res://first.tres"; var second = "res://second.tres"',
+    '# preload("res://commented/missing.tres")',
+    'var not_a_reference = "user://save.dat"'
+  ].join("\n")).sort(), [
+    "Some Folder/My Asset (1).tres",
+    "Some Folder/file.tres",
+    "first.tres",
+    "folder/escaped name.tres",
+    "folder/file.tres",
+    'folder/quoted"name.tres',
+    "folder/unquoted path(My Asset).tres",
+    "second.tres"
+  ]);
+});
+
+test("preflight resolves complete resource paths containing spaces", () => {
+  const result = preflightGodot([
+    { path: "project.godot", size: 100, content: 'config_version=5\nconfig/features=PackedStringArray("4.4", "GL Compatibility")\nrun/main_scene="res://Some Folder/Main Scene.tscn"\n[rendering]\nrenderer/rendering_method="gl_compatibility"\n' },
+    { path: "export_presets.cfg", size: 100, content: '[preset.0]\nname="HTML5"\nplatform="Web"\nrunnable=true\n' },
+    { path: "Some Folder/Main Scene.tscn", size: 20, content: '[gd_scene]\n[ext_resource type="Script" path="res://Some Folder/My Script (1).gd" id="1"]\n' },
+    { path: "Some Folder/My Script (1).gd", size: 20, content: 'extends Node\n' }
+  ]);
+  assert.equal(result.status, "SUPPORTED", result.errors.join(" "));
+  assert.deepEqual(result.missingFiles, []);
+});
+
 test("identifies FBX assets that need the unavailable converter", async () => {
   const result = preflightGodot(await fixture("fbx-asset"));
   assert.equal(result.status, "REQUIRES_ADAPTATION");
@@ -101,7 +136,8 @@ test("identifies FBX assets that need the unavailable converter", async () => {
 test("uses only explicitly declared builder compatibility and prefers exact matches", () => {
   assert.equal(selectGodotBuilder("4.3")?.version, "4.3");
   assert.equal(selectGodotBuilder("4.0")?.version, "4.3");
-  assert.equal(selectGodotBuilder("4.4"), undefined);
+  assert.equal(selectGodotBuilder("4.4")?.version, "4.4");
+  assert.equal(GODOT_BUILDER_REGISTRY.find((builder) => builder.version === "4.4")?.supported, true);
   assert.equal(GODOT_BUILDER_REGISTRY[0].digest, null);
   assert.match(GODOT_BUILDER_REGISTRY[0].baseImageDigest, /^sha256:[0-9a-f]{64}$/);
 });

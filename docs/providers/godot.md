@@ -7,14 +7,18 @@ it does not run project scripts, plugins, binaries, or user commands.
 
 ## Engine and builder versions
 
-The pinned builder matrix currently contains only Godot 4.3. The registry
-selects an exact builder match first and permits only explicitly listed
-project-version compatibility; it does not silently fall back to 4.3. The
-current compatibility allow-list includes Godot 4.0 for the M9.3 external
-project validation. That mapping remains subject to a successful real build.
-Other unlisted Godot 4 versions and projects without a detectable version are
+The builder registry contains separate Godot 4.3 and 4.4 builders. Each base
+image is pinned by an observed registry digest; the 4.4 image also verifies the
+official Godot export-template archive against the upstream SHA-512 release
+manifest during image construction. The registry selects an exact builder
+match first and permits only explicitly listed project-version compatibility;
+it does not silently fall back between 4.3 and 4.4. The 4.3 compatibility
+allow-list includes Godot 4.0 for the M9.3 external project validation. Other
+unlisted Godot 4 versions and projects without a detectable version are
 `REQUIRES_BUILDER`. Godot 3 projects are `UNSUPPORTED`; Game2Web does not
-migrate project files.
+migrate project files. The derived builder images are constructed in CI from
+these pinned inputs; they are not published to a public registry by this
+workflow.
 
 The version-to-builder mapping is centralized in
 `packages/providers/src/index.ts`. Additional pinned images can be added to that
@@ -34,10 +38,11 @@ Ambiguous/invalid presets and unsafe adaptations require project changes.
 
 ## Resource and dependency checks
 
-Preflight checks literal `res://` references in readable project text files,
+Preflight checks quoted and escaped `res://` references in readable project text files,
 enabled editor-plugin manifests, native extensions, and FBX assets. Resource
-reference analysis is intentionally bounded and is not a complete Godot parser.
-Missing referenced files require adaptation. Native extensions are not
+reference analysis preserves complete paths with spaces and punctuation and
+remains intentionally bounded; it is not a complete Godot parser. Missing
+referenced files require adaptation. Native extensions are not
 supported by the current Web builder.
 
 The builder performs a headless editor import inside its isolated, offline

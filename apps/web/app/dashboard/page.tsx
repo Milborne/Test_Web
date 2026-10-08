@@ -24,6 +24,7 @@ export default function Dashboard() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [redistributionCleared, setRedistributionCleared] = useState(false);
 
   async function create() {
     if (!name.trim() || !archive) {
@@ -36,6 +37,7 @@ export default function Dashboard() {
     const form = new FormData();
     form.set("name", name);
     form.set("archive", archive);
+    if (redistributionCleared) form.set("redistributionStatus", "REDISTRIBUTION_CLEARED");
     try {
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000"}/api/projects`, {
         method: "POST",
@@ -91,6 +93,7 @@ export default function Dashboard() {
           <input id="project-name" name="name" autoComplete="off" value={name} onChange={(event) => setName(event.target.value)} placeholder="Project name…" />
           <label htmlFor="source-archive">Source archive</label>
           <input id="source-archive" name="archive" aria-describedby="upload-status" type="file" accept=".zip,application/zip" onChange={(event) => setArchive(event.target.files?.[0] ?? null)} />
+          <label className="license-attestation"><input type="checkbox" checked={redistributionCleared} onChange={(event) => setRedistributionCleared(event.target.checked)} /> I have verified the rights required to publish this game and its assets.</label>
           <button className="button" onClick={create} disabled={uploading}>{uploading ? "Uploading…" : "Upload game"}</button>
         </div>
       </section>

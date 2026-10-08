@@ -16,15 +16,17 @@ jobs:
       REDIS_URL: redis://localhost:6379
       S3_ENDPOINT: http://localhost:9000
       APP_ORIGIN: http://127.0.0.1:3000
-      PLAYER_ORIGIN: http://127.0.0.1:4000
+      PLAYER_ORIGIN: http://localhost:4000
       NEXT_PUBLIC_API_URL: http://127.0.0.1:4000
-      NEXT_PUBLIC_PLAYER_ORIGIN: http://127.0.0.1:4000
-      COMPATIBILITY_PROJECTS: turn-based-rpg
-      COMPATIBILITY_REQUIRED_PROJECT: turn-based-rpg
+      NEXT_PUBLIC_PLAYER_ORIGIN: http://localhost:4000
+      COMPATIBILITY_PROJECTS: godot-platformer
+      COMPATIBILITY_REQUIRED_PROJECT: godot-platformer
     steps:
       - uses: actions/checkout@v4
       - name: Verify isolated origins
-        run: test "$APP_ORIGIN" != "$PLAYER_ORIGIN"
+        run: |
+          test "$APP_ORIGIN" != "$PLAYER_ORIGIN"
+          test "$(node -p 'new URL(process.env.APP_ORIGIN).hostname')" != "$(node -p 'new URL(process.env.PLAYER_ORIGIN).hostname')"
       - uses: actions/setup-node@v4
         with:
           node-version: 22.11.0
@@ -34,7 +36,8 @@ jobs:
       - run: shellcheck scripts/compatibility/*.sh
       - run: npx playwright install --with-deps chromium
       - run: docker compose -f infra/docker-compose.yml up -d --wait
-      - run: docker build --tag game2web/godot-builder:4.3.0 builders/godot
+      - run: docker build --file builders/godot/Dockerfile --tag game2web/godot-builder:4.3.0 .
+      - run: docker build --file builders/godot-4.4/Dockerfile --tag game2web/godot-builder:4.4.0 .
       - run: npx prisma db push --schema packages/database/prisma/schema.prisma
       - name: Start API, worker and web
         run: |

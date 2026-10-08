@@ -3,7 +3,7 @@ import { PrismaClient } from "@prisma/client";
 import AdmZip from "adm-zip";
 import { providers, readGodotProjectFiles, validateArtifacts } from "@game2web/providers";
 import type { BuildContext, ProviderId } from "@game2web/shared";
-import { getObject, putObject } from "@game2web/storage";
+import { deleteObject, getObject, putObject } from "@game2web/storage";
 import { createDeploymentProvider } from "@game2web/deployment";
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -13,6 +13,18 @@ const prisma = new PrismaClient();
 const connection = { url: process.env.REDIS_URL ?? "redis://localhost:6379" };
 const limits = { maxBuildMinutes: Number(process.env.BUILD_MAX_MINUTES ?? 10), maxMemoryMb: Number(process.env.BUILD_MAX_MEMORY_MB ?? 4096), maxCpus: Number(process.env.BUILD_MAX_CPUS ?? 2), maxPids: Number(process.env.BUILD_MAX_PIDS ?? 256), maxDiskMb: Number(process.env.BUILD_MAX_DISK_MB ?? 2048), maxUploadMb: Number(process.env.BUILD_MAX_UPLOAD_MB ?? 500), maxSourceFiles: Number(process.env.BUILD_MAX_FILES ?? 10_000), maxExpandedSourceMb: Number(process.env.BUILD_MAX_EXPANDED_SOURCE_MB ?? 1024) };
 const deploymentProvider = createDeploymentProvider();
+
+let previewCleanupRunning = false;
+const previewCleanupTimer = setInterval(() => {
+  if (previewCleanupRunning) return;
+  previewCleanupRunning = true;
+  void cleanupExpiredPreviews().catch((error) => {
+    console.error("Preview cleanup failed", error);
+  }).finally(() => {
+    previewCleanupRunning = false;
+  });
+}, Math.max(1_000, Number(process.env.PREVIEW_CLEANUP_INTERVAL_MS ?? 60_000)));
+previewCleanupTimer.unref();
 
 new Worker("game-builds", async (job) => {
   const started = Date.now();
@@ -102,18 +114,24 @@ new Worker("game-builds", async (job) => {
       throw new Error("Godot Web export is missing required WASM or JavaScript runtime artifacts");
     }
     const project = await prisma.project.findUniqueOrThrow({ where: { id: projectId } });
-    const deploymentLocation = await deploymentProvider.publish({ projectId, projectSlug: project.slug, buildId });
-    const prefix = deploymentLocation.publishedPrefix;
+    const isPreviewBuild = buildRecord.mode === "PREVIEW";
+    const prefix = isPreviewBuild
+      ? `private/${projectId}/${buildId}`
+      : (await deploymentProvider.publish({ projectId, projectSlug: project.slug, buildId })).publishedPrefix;
     for (const artifact of artifacts) {
       const body = await readFile(path.join(outputDirectory, artifact.path));
       const stored = await putObject(`${prefix}/${artifact.path.replaceAll("\\", "/")}`, body, mime(artifact.path));
       await prisma.artifact.create({ data: { buildId, path: artifact.path.replaceAll("\\", "/"), size: stored.size, storageKey: stored.key, mimeType: mime(artifact.path), checksum: stored.checksum } });
     }
     await update(buildId, "UPLOADING", "Artifacts uploaded to MinIO");
-    const deployment = await prisma.deployment.create({ data: { projectId, buildId, slug: project.slug, version: 1, published: true, publishedPrefix: prefix } });
+    let deployment;
+    if (!isPreviewBuild) {
+      deployment = await prisma.deployment.create({ data: { projectId, buildId, slug: project.slug, version: 1, published: true, publishedPrefix: prefix } });
+    }
     await prisma.build.update({ where: { id: buildId }, data: { status: "READY", durationMs: Date.now() - started } });
-    await addLog(buildId, `Deployment ready at /play/${deployment.slug}`);
-    return { status: "READY", deploymentId: deployment.id };
+    if (deployment) await addLog(buildId, `Deployment ready at /play/${deployment.slug}`);
+    else await addLog(buildId, "Preview build READY; awaiting owner-authorized temporary preview creation");
+    return { status: "READY", ...(deployment ? { deploymentId: deployment.id } : {}) };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await prisma.build.update({ where: { id: buildId }, data: { status: "FAILED", error: message, durationMs: Date.now() - started } });
@@ -123,6 +141,19 @@ new Worker("game-builds", async (job) => {
     await rm(workspace, { recursive: true, force: true });
   }
 }, { connection, concurrency: Number(process.env.MAX_CONCURRENT_BUILDS ?? 2) });
+
+async function cleanupExpiredPreviews() {
+  const expired = await prisma.previewDeployment.findMany({
+    where: { OR: [{ expiresAt: { lte: new Date() } }, { revokedAt: { not: null } }] },
+    include: { build: { include: { artifacts: true } } }
+  });
+  for (const preview of expired) {
+    for (const artifact of preview.build.artifacts) {
+      await deleteObject(`${preview.storagePrefix}/${artifact.path}`);
+    }
+    await prisma.previewDeployment.delete({ where: { id: preview.id } });
+  }
+}
 
 async function update(buildId: string, status: "PREPARING" | "VALIDATING" | "BUILDING" | "PACKAGING" | "UPLOADING", message: string) {
   await prisma.build.update({ where: { id: buildId }, data: { status } });

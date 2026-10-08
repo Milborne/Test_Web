@@ -30,7 +30,7 @@ cat > "$LICENSES" <<'EOF'
 
 This report records upstream declarations; it is not a legal opinion.
 
-| Project | Repository | Commit | Code license | Asset license | Attribution | Redistribution |
+| Project | Repository | Commit | Code license | Asset license | Attribution | Redistribution status |
 |---|---|---|---|---|---|---|
 EOF
 
@@ -59,14 +59,18 @@ register() {
 cookie="$WORKSPACE/cookies.txt"
 register "$cookie"
 
-while IFS=$'\t' read -r id repository commit branch license_file project_dir; do
+while IFS=$'\t' read -r id repository commit branch license_file project_dir code_license asset_license redistribution_status attribution; do
   [ -n "$id" ] || continue
   started="$(date +%s)"
   project_report="$REPORT_ROOT/$id"
   mkdir -p "$project_report"
   license_text="not-found"
   [ "$license_file" = "not-found" ] || license_text="$(head -1 "$project_dir/$license_file" | tr -d '\r')"
-  printf '%s\n' "| $id | $repository | \`$commit\` | $license_text | See upstream | Not published automatically |" >> "$LICENSES"
+  code_license="${code_license:-$license_text}"
+  asset_license="${asset_license:-See upstream; review required}"
+  redistribution_status="${redistribution_status:-LICENSE_REVIEW_REQUIRED}"
+  attribution="${attribution:-See upstream asset credits}"
+  printf '%s\n' "| $id | $repository | \`$commit\` | $code_license | $asset_license | $attribution | $redistribution_status |" >> "$LICENSES"
 
   source_archive="$WORKSPACE/$id-source.zip"
   git -C "$project_dir" archive --format=zip --output="$source_archive" HEAD
@@ -95,6 +99,9 @@ while IFS=$'\t' read -r id repository commit branch license_file project_dir; do
   build_status="NOT_RUN"
   artifacts_status="NOT_RUN"
   player_status="NOT_RUN"
+  preview_id=""
+  preview_url=""
+  preview_persistent="false"
   result="UNSUPPORTED"
   if [ -n "$required_project" ] && [ "$id" = "$required_project" ]; then
     required_project_seen=true
@@ -108,7 +115,7 @@ while IFS=$'\t' read -r id repository commit branch license_file project_dir; do
     [ -n "$errors" ] || errors="$(printf '%s' "$response" | json_field error || true)"
   elif [ "$provider" = "godot" ] && [ "$compatible" = "true" ]; then
     if ! build_response="$(curl --fail --silent --show-error -b "$cookie" -H "x-csrf-token: $csrf" \
-      -H 'content-type: application/json' -d '{}' "$API_URL/api/projects/$project_id/builds")"; then
+      -H 'content-type: application/json' -d '{"mode":"PREVIEW"}' "$API_URL/api/projects/$project_id/builds")"; then
       build_response=""
       errors="build request failed"
     fi
@@ -136,19 +143,28 @@ while IFS=$'\t' read -r id repository commit branch license_file project_dir; do
         index_size="$(printf '%s' "$status_json" | node -e 'const fs=require("fs"); const x=JSON.parse(fs.readFileSync(0)); const a=x.artifacts?.find(a=>a.path==="index.html"); process.stdout.write(a?.size>0?"1":"0")')"
         if [ "$index_size" = "1" ]; then artifacts_status="PASS"; else artifacts_status="FAIL"; errors="index.html missing or empty"; fi
         if [ "$artifacts_status" = "PASS" ]; then
-          slug="$(printf '%s' "$status_json" | json_field project slug)"
-          if ! player_html="$(curl --fail --silent --show-error "$API_URL/api/play/$slug/")"; then
+          preview_response="$(curl --fail --silent --show-error -b "$cookie" -H "x-csrf-token: $csrf" \
+            -H 'content-type: application/json' -d '{}' "$API_URL/api/builds/$build_id/previews")" || preview_response=""
+          printf '%s\n' "$preview_response" > "$project_report/preview.json"
+          preview_url="$(printf '%s' "$preview_response" | json_field url || true)"
+          player_path="$(printf '%s' "$preview_response" | json_field playerPath || true)"
+          preview_id="$(printf '%s' "$preview_response" | json_field id || true)"
+          preview_persistent="$(printf '%s' "$preview_response" | json_field persistent || true)"
+          if [ -z "$preview_url" ] || [ -z "$player_path" ] || [ -z "$preview_id" ]; then
             player_status="FAIL"
-            errors="published player request failed"
+            errors="preview deployment creation failed"
+          elif ! player_html="$(curl --fail --silent --show-error "$player_path")"; then
+            player_status="FAIL"
+            errors="temporary preview player request failed"
           elif ! printf '%s' "$player_html" | grep -q '<'; then
             player_status="FAIL"
-            errors="published player did not return HTML"
-          elif ! node "$ROOT/scripts/compatibility/player-check.mjs" "$APP_URL" "$slug"; then
+            errors="temporary preview player did not return HTML"
+          elif ! node "$ROOT/scripts/compatibility/player-check.mjs" "$APP_URL" "$preview_url"; then
             player_status="FAIL"
-            errors="published player browser validation failed"
-          elif ! EXTERNAL_GAME_SLUG="$slug" npx playwright test "$ROOT/e2e/external-player.spec.ts" --reporter=line; then
+            errors="temporary preview browser validation failed"
+          elif ! EXTERNAL_GAME_PREVIEW_URL="$preview_url" npx playwright test "$ROOT/e2e/external-player.spec.ts" --reporter=line; then
             player_status="FAIL"
-            errors="external Playwright runtime validation failed"
+            errors="external preview Playwright runtime validation failed"
           else
             player_status="PASS"
           fi
@@ -189,6 +205,13 @@ while IFS=$'\t' read -r id repository commit branch license_file project_dir; do
     artifacts: $artifacts_status
     player: $player_status
     duration_seconds: $duration
+    license_status: $redistribution_status
+    code_license: $(yaml_quote "$code_license")
+    asset_license: $(yaml_quote "$asset_license")
+    attribution: $(yaml_quote "$attribution")
+    preview_id: $(yaml_quote "${preview_id:-}")
+    preview_url: $(yaml_quote "${preview_url:-}")
+    preview_persistent: ${preview_persistent:-false}
     preflight_status: ${preflight_status:-NOT_AVAILABLE}
     preflight_duration_ms: $preflight_ms
     builder_version: "$builder_version"

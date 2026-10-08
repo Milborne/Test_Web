@@ -9,6 +9,7 @@ export interface GodotBuilderConfig {
   version: string;
   image: string;
   digest: string | null;
+  supported: boolean;
   baseImage: string;
   baseImageDigest: string;
   supportedExportFormats: readonly string[];
@@ -22,10 +23,23 @@ export const GODOT_BUILDER_REGISTRY: readonly GodotBuilderConfig[] = [
     version: "4.3",
     image: "game2web/godot-builder:4.3.0",
     digest: null,
+    supported: true,
     baseImage: "flashlight13/godot:4.3",
     baseImageDigest: "sha256:5df8082d218b41df626b0d30dd0aebeee9d31963347cccbbf83c697f5135618a",
     supportedExportFormats: ["Web"],
     compatibleProjectVersions: ["4.0"],
+    status: "available",
+    supportsFbx2Gltf: false
+  },
+  {
+    version: "4.4",
+    image: "game2web/godot-builder:4.4.0",
+    digest: null,
+    supported: true,
+    baseImage: "flashlight13/godot:4.4",
+    baseImageDigest: "sha256:bb0dc52ab4e77528cac72a8707ed043b8c179370a91ce0825e2bc124a41f8cab",
+    supportedExportFormats: ["Web"],
+    compatibleProjectVersions: ["4.4"],
     status: "available",
     supportsFbx2Gltf: false
   }
@@ -138,13 +152,13 @@ export function detectProject(files: ProjectFile[], override?: ProviderId): Dete
 }
 
 export function builderForVersion(version: string) {
-  return GODOT_BUILDER_REGISTRY.find((builder) => builder.version === version && builder.status === "available");
+  return GODOT_BUILDER_REGISTRY.find((builder) => builder.version === version && builder.supported && builder.status === "available");
 }
 
 export function selectGodotBuilder(projectVersion: string) {
-  const exact = GODOT_BUILDER_REGISTRY.find((builder) => builder.version === projectVersion && builder.status === "available");
+  const exact = GODOT_BUILDER_REGISTRY.find((builder) => builder.version === projectVersion && builder.supported && builder.status === "available");
   if (exact) return exact;
-  return GODOT_BUILDER_REGISTRY.find((builder) => builder.status === "available" && builder.compatibleProjectVersions.includes(projectVersion));
+  return GODOT_BUILDER_REGISTRY.find((builder) => builder.supported && builder.status === "available" && builder.compatibleProjectVersions.includes(projectVersion));
 }
 
 export function isGodotPreflightTextFile(filePath: string) {
@@ -274,9 +288,7 @@ export function preflightGodot(files: ProjectFile[], durationMs = 0): PreflightR
   if (textFiles.length === 0) warnings.push("Project text files were unavailable for resource and plugin reference checks.");
   for (const file of textFiles) {
     const content = file.content ?? "";
-    const quotedResources = [...content.matchAll(/(["'])res:\/\/(.*?)\1/g)].map((match) => match[2]);
-    const unquotedResources = [...content.matchAll(/res:\/\/([A-Za-z0-9_./-]+)/g)].map((match) => match[1]);
-    for (const rawResource of new Set([...quotedResources, ...unquotedResources])) {
+    for (const rawResource of extractGodotResourceReferences(content)) {
       const resource = rawResource.replaceAll("\\", "/");
       if (resource.startsWith(".godot/") || resource.startsWith(".import/") || resource.includes("://")) continue;
       const resolved = projectDirectory ? `${projectDirectory}/${resource}` : resource;
@@ -358,6 +370,52 @@ export function preflightGodot(files: ProjectFile[], durationMs = 0): PreflightR
     durationMs: Math.max(durationMs, Date.now() - started)
   };
   return result;
+}
+
+export function extractGodotResourceReferences(content: string): string[] {
+  const references = new Set<string>();
+  let index = 0;
+  while (index < content.length) {
+    const character = content[index];
+    if (character === "#") {
+      const newline = content.indexOf("\n", index);
+      index = newline === -1 ? content.length : newline + 1;
+      continue;
+    }
+    if (character === "\"" || character === "'") {
+      const quote = character;
+      let value = "";
+      index++;
+      while (index < content.length && content[index] !== quote) {
+        if (content[index] === "\\" && index + 1 < content.length && /[\s"'\\,;}\]]/.test(content[index + 1])) {
+          value += content[index + 1];
+          index += 2;
+        } else {
+          value += content[index++];
+        }
+      }
+      if (index < content.length) index++;
+      if (value.startsWith("res://")) references.add(value.slice("res://".length));
+      continue;
+    }
+    if (content.startsWith("res://", index)) {
+      index += "res://".length;
+      let reference = "";
+      while (index < content.length && !/[\s,;}\]]/.test(content[index])) {
+        if (content[index] === "\\" && index + 1 < content.length && /[\s"'\\,;}\]]/.test(content[index + 1])) {
+          reference += content[index + 1];
+          index += 2;
+        } else {
+          reference += content[index++];
+        }
+      }
+      reference = reference.replace(/[)]$/, "");
+      if (reference) references.add(reference);
+      continue;
+    }
+    index++;
+  }
+  return [...references];
 }
 
 function detectGodotVersion(project: ProjectFile, files: ProjectFile[]): EngineVersion | null {

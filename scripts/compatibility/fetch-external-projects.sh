@@ -13,7 +13,7 @@ cleanup_on_error() {
 }
 trap cleanup_on_error ERR
 
-while IFS=$'\t' read -r id repository requested_commit; do
+while IFS=$'\t' read -r id repository requested_commit code_license asset_license redistribution_status attribution; do
   [ -n "$id" ] || continue
   if [ -n "${COMPATIBILITY_PROJECTS:-}" ] && [ "${COMPATIBILITY_PROJECTS}" != "all" ]; then
     case ",${COMPATIBILITY_PROJECTS}," in *,"$id",*) ;; *) continue ;; esac
@@ -37,14 +37,18 @@ while IFS=$'\t' read -r id repository requested_commit; do
   [ -n "$branch" ] || branch="detached"
   license_file="$(find "$project_dir" -maxdepth 2 -type f \( -iname 'license' -o -iname 'license.*' -o -iname 'copying' -o -iname 'copying.*' \) -print -quit | sed "s#^$project_dir/##")"
   [ -n "$license_file" ] || license_file="not-found"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$repository" "$commit" "$branch" "$license_file" "$project_dir" >> "$METADATA"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$repository" "$commit" "$branch" "$license_file" "$project_dir" "${code_license:-unknown}" "${asset_license:-unknown}" "${redistribution_status:-LICENSE_REVIEW_REQUIRED}" "${attribution:-not-recorded}" >> "$METADATA"
 done < <(awk '
   function emit() {
-    if (id != "" && repository != "") print id "\t" repository "\t" commit
+    if (id != "" && repository != "") print id "\t" repository "\t" commit "\t" code_license "\t" asset_license "\t" redistribution_status "\t" attribution
   }
-  /^[[:space:]]*-[[:space:]]+id:/ { emit(); id=$0; sub(/^.*id:[[:space:]]*/, "", id); repository=""; commit=""; next }
-  /^[[:space:]]+repository:/ { repository=$0; sub(/^.*repository:[[:space:]]*/, "", repository); gsub(/"/, "", repository); next }
-  /^[[:space:]]+commit:/ { commit=$0; sub(/^.*commit:[[:space:]]*/, "", commit); gsub(/"/, "", commit); next }
+  /^[[:space:]]*-[[:space:]]+id:/ { emit(); id=$0; sub(/^.*id:[[:space:]]*/, "", id); repository=""; commit=""; code_license=""; asset_license=""; redistribution_status=""; attribution=""; next }
+  /^[[:space:]]+repository:/ { repository=$0; sub(/^[^:]*:[[:space:]]*/, "", repository); gsub(/"/, "", repository); next }
+  /^[[:space:]]+commit:/ { commit=$0; sub(/^[^:]*:[[:space:]]*/, "", commit); gsub(/"/, "", commit); next }
+  /^[[:space:]]+(license|code_license):/ { code_license=$0; sub(/^[^:]*:[[:space:]]*/, "", code_license); gsub(/"/, "", code_license); next }
+  /^[[:space:]]+asset_license:/ { asset_license=$0; sub(/^[^:]*:[[:space:]]*/, "", asset_license); gsub(/"/, "", asset_license); next }
+  /^[[:space:]]+redistribution_status:/ { redistribution_status=$0; sub(/^[^:]*:[[:space:]]*/, "", redistribution_status); gsub(/"/, "", redistribution_status); next }
+  /^[[:space:]]+attribution:/ { attribution=$0; sub(/^[^:]*:[[:space:]]*/, "", attribution); gsub(/"/, "", attribution); next }
   END { emit() }
 ' "$MANIFEST")
 

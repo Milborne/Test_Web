@@ -7,13 +7,16 @@
 5. Build builder images:
 
 ```bash
-docker build -t game2web/emscripten-builder:latest builders/emscripten
-docker build -t game2web/godot-builder:4.3 builders/godot
+docker build -t game2web/emscripten-builder:3.1.74 builders/emscripten
+docker build -f builders/godot/Dockerfile -t game2web/godot-builder:4.3.0 .
+docker build -f builders/godot-4.4/Dockerfile -t game2web/godot-builder:4.4.0 .
 ```
 
 6. Start the API and web app with `npm run dev`.
 
-The API accepts multipart source archives and persists them to MinIO before a build can be queued. The worker queue is real: build requests carry a storage key, the worker downloads into a temporary isolated workspace, invokes the selected Docker builder, validates output, uploads artifacts, and creates an immutable deployment. It refuses to publish an output without a non-empty `index.html`.
+The API accepts multipart source archives and persists them to MinIO before a build can be queued. The worker queue is real: build requests carry a storage key, the worker downloads into a temporary isolated workspace, invokes the selected Docker builder, validates output, uploads artifacts, and creates an immutable deployment. Production builds require an explicit redistribution-clearance attestation. Projects awaiting license review can use `mode: "PREVIEW"`; owner-authorized previews receive an unguessable expiring token and use the isolated `previews/` storage namespace.
+
+Previews are not considered manually available after a workflow unless the deployment environment configures persistent HTTPS `APP_ORIGIN`, `PLAYER_ORIGIN`, `S3_ENDPOINT`, and `PREVIEW_PERSISTENT=true`. The Compatibility Lab's GitHub-hosted services are ephemeral and report `persistent: false`; their preview URLs stop working when the job ends. Preview lifetime defaults to 24 hours (`PREVIEW_TTL_HOURS`, maximum 168) and the worker removes expired preview artifacts.
 
 ## Full validation
 

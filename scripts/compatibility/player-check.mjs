@@ -1,7 +1,7 @@
 import { chromium } from "@playwright/test";
 
-const [appUrl, slug] = process.argv.slice(2);
-if (!appUrl || !slug) throw new Error("usage: player-check.mjs <app-url> <slug>");
+const [appUrl, previewUrl] = process.argv.slice(2);
+if (!appUrl || !previewUrl) throw new Error("usage: player-check.mjs <app-url> <preview-url>");
 
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage();
@@ -11,7 +11,8 @@ page.on("console", (message) => {
   if (message.type() === "error") errors.push(message.text());
 });
 try {
-  const response = await page.goto(`${appUrl}/play/${encodeURIComponent(slug)}`, { waitUntil: "networkidle" });
+  const target = new URL(previewUrl, appUrl).toString();
+  const response = await page.goto(target, { waitUntil: "networkidle" });
   if (!response?.ok()) throw new Error(`player page returned HTTP ${response?.status() ?? "unknown"}`);
   const frame = page.frameLocator("iframe");
   await frame.locator("canvas").waitFor({ state: "visible", timeout: 30_000 });

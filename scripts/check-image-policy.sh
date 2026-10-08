@@ -12,4 +12,6 @@ for file in builders/*/Dockerfile; do
   fi
 done
 grep -q 'MINIO_IMAGE' infra/docker-compose.yml
+grep -q 'Godot_v4.4-stable_export_templates' builders/godot-4.4/Dockerfile
+grep -q 'sha512sum --check' builders/godot-4.4/Dockerfile
 printf 'Image policy PASS (builder base images are pinned by version and digest)\n'

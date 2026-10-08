@@ -1,4 +1,4 @@
-FROM emscripten/emsdk:3.1.74
+FROM emscripten/emsdk:3.1.74@sha256:af45409f3199d88db4b1b03af0098532c8fb33a375ac257463eeb0a622870d06
 RUN apt-get update && apt-get install -y --no-install-recommends cmake ninja-build && rm -rf /var/lib/apt/lists/*
 ENV EMSCRIPTEN_VERSION=3.1.74
 ENV SDL_VERSION=emscripten-built-in-sdl2

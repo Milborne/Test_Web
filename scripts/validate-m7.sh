@@ -82,6 +82,7 @@ admission_csrf="$(awk '$6 == "game2web_csrf" { print $7 }' "$cookie_file")"
 admission_project="$(curl --fail --silent --show-error -b "$cookie_file" \
   -H "x-csrf-token: $admission_csrf" \
   -F 'name=godot-admission' \
+  -F 'redistributionStatus=REDISTRIBUTION_CLEARED' \
   -F 'archive=@examples/godot-demo.zip;type=application/zip' \
   "http://127.0.0.1:4001/api/projects")"
 admission_project_id="$(printf '%s' "$admission_project" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).project.id))')"

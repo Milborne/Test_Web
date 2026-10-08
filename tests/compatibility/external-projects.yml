@@ -1,6 +1,7 @@
 projects:
   - id: turn-based-rpg
     repository: https://github.com/corndogit/Turn-based_RPG.git
+    commit: a5c8190278381cf4ddedd45c2958ca7f11228674
     expected_engine: godot
     expected_min_version: "4.0"
     license: MIT
@@ -10,8 +11,12 @@ projects:
     license: MIT
   - id: godot-platformer
     repository: https://github.com/SlayHorizon/godot-2d-platformer-demo.git
+    commit: 6944ec4c323dcbad470ff7654fec665f010f50d1
     expected_engine: godot
     license: MIT
+    asset_license: "CC0 for Pixel Frog and node-icon assets; music license unconfirmed"
+    redistribution_status: LICENSE_REVIEW_REQUIRED
+    attribution: "Music credit: Noodle Cafe by Fettuccini; asset credits are recorded upstream"
   - id: roboblast
     repository: https://github.com/realkotob/ggj-2024.git
     expected_engine: godot

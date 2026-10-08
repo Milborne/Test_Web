@@ -66,13 +66,21 @@ jobs:
         env:
           DATABASE_URL: postgresql://game2web:game2web@localhost:5432/game2web
         run: npx prisma db push --schema packages/database/prisma/schema.prisma
+      - name: Verify isolated application and player origins
+        env:
+          APP_ORIGIN: http://127.0.0.1:3000
+          PLAYER_ORIGIN: http://localhost:4000
+        run: |
+          test "$APP_ORIGIN" != "$PLAYER_ORIGIN"
+          test "$(node -p 'new URL(process.env.APP_ORIGIN).hostname')" != "$(node -p 'new URL(process.env.PLAYER_ORIGIN).hostname')"
       - name: Run MVP validation harness
         env:
           DATABASE_URL: postgresql://game2web:game2web@localhost:5432/game2web
           REDIS_URL: redis://localhost:6379
           S3_ENDPOINT: http://localhost:9000
-          APP_ORIGIN: http://localhost:3000
+          APP_ORIGIN: http://127.0.0.1:3000
           PLAYER_ORIGIN: http://localhost:4000
+          PREVIEW_CLEANUP_INTERVAL_MS: "1000"
         run: bash scripts/validate-mvp.sh
       - name: Collect Compose logs
         if: always()
@@ -86,7 +94,8 @@ jobs:
             .validation/
             test-results/
             /tmp/game2web-*.log
-          if-no-files-found: ignore
+          if-no-files-found: error
+          include-hidden-files: true
       - name: Tear down infrastructure
         if: always()
         run: docker compose -f infra/docker-compose.yml down -v

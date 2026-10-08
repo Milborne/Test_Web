@@ -1,4 +1,4 @@
-import { CreateBucketCommand, GetObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { CreateBucketCommand, DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 
@@ -38,6 +38,10 @@ export async function getObject(key: string) {
   const result = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
   if (!result.Body) throw new Error(`Storage object is empty: ${key}`);
   return { body: await streamToBuffer(result.Body as Readable), contentType: result.ContentType ?? "application/octet-stream" };
+}
+
+export async function deleteObject(key: string) {
+  await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
 }
 
 async function streamToBuffer(stream: Readable) {

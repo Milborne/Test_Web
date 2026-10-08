@@ -292,7 +292,8 @@ export function preflightGodot(files: ProjectFile[], durationMs = 0): PreflightR
       const resource = rawResource.replaceAll("\\", "/");
       if (resource.startsWith(".godot/") || resource.startsWith(".import/") || resource.includes("://")) continue;
       const resolved = projectDirectory ? `${projectDirectory}/${resource}` : resource;
-      if (!availablePaths.has(resolved)) missingFiles.add(resolved);
+      const directoryExists = resource.endsWith("/") && files.some((file) => file.path.startsWith(resolved));
+      if (!availablePaths.has(resolved) && !directoryExists) missingFiles.add(resolved);
     }
   }
   if (missingFiles.size > 0) {

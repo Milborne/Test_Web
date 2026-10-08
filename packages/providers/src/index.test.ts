@@ -121,7 +121,9 @@ test("preflight resolves complete resource paths containing spaces", () => {
     { path: "project.godot", size: 100, content: 'config_version=5\nconfig/features=PackedStringArray("4.4", "GL Compatibility")\nrun/main_scene="res://Some Folder/Main Scene.tscn"\n[rendering]\nrenderer/rendering_method="gl_compatibility"\n' },
     { path: "export_presets.cfg", size: 100, content: '[preset.0]\nname="HTML5"\nplatform="Web"\nrunnable=true\n' },
     { path: "Some Folder/Main Scene.tscn", size: 20, content: '[gd_scene]\n[ext_resource type="Script" path="res://Some Folder/My Script (1).gd" id="1"]\n' },
-    { path: "Some Folder/My Script (1).gd", size: 20, content: 'extends Node\n' }
+    { path: "Some Folder/My Script (1).gd", size: 20, content: 'extends Node\n' },
+    { path: "assets/pixel-adventure/Items/Fruits/Apple.png", size: 20 },
+    { path: "scene.tscn", size: 20, content: '[gd_scene]\n[ext_resource type="Texture2D" path="res://assets/pixel-adventure/Items/Fruits/" id="1"]\n' }
   ]);
   assert.equal(result.status, "SUPPORTED", result.errors.join(" "));
   assert.deepEqual(result.missingFiles, []);

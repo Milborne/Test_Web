@@ -22,6 +22,7 @@ const playerOrigin = process.env.PLAYER_ORIGIN ?? "http://localhost:3000";
 const previewProvider = createPreviewDeploymentProvider();
 const appFrameOrigins = [...new Set([appOrigin, appOrigin.replace("localhost", "127.0.0.1")])].join(" ");
 const rateBuckets = new Map<string, { count: number; reset: number }>();
+const buildAdmissionLockNamespace = 0x473257;
 app.addHook("onSend", async (_request, reply) => {
   reply.header("X-Content-Type-Options", "nosniff");
   reply.header("Referrer-Policy", "strict-origin-when-cross-origin");
@@ -141,14 +142,28 @@ app.post<{ Params: { id: string }; Body: { provider?: ProviderId; mode?: "PRODUC
   if (mode === "PRODUCTION" && project.redistributionStatus !== "REDISTRIBUTION_CLEARED") {
     return reply.code(403).send({ error: "Production deployment requires explicit redistribution license clearance; use PREVIEW mode for a temporary owner-authorized test" });
   }
-  const activeBuilds = await prisma.build.count({ where: { project: { userId: user.id }, status: { in: ["QUEUED", "PREPARING", "VALIDATING", "BUILDING", "PACKAGING", "UPLOADING"] } } });
-  if (activeBuilds >= Number(process.env.MAX_CONCURRENT_BUILDS_PER_USER ?? 2)) return reply.code(429).send({ error: "Build concurrency limit reached; try again later" });
-  const totalActiveBuilds = await prisma.build.count({ where: { status: { in: ["QUEUED", "PREPARING", "VALIDATING", "BUILDING", "PACKAGING", "UPLOADING"] } } });
-  if (totalActiveBuilds >= Number(process.env.MAX_CONCURRENT_BUILDS ?? 2)) return reply.code(429).send({ error: "Build capacity is currently full; try again later" });
-  const filesystem = await statfs(process.env.BUILD_WORKSPACE_ROOT ?? "/tmp");
-  const freeMb = (Number(filesystem.bavail) * Number(filesystem.bsize)) / (1024 * 1024);
-  if (freeMb < Number(process.env.BUILD_MIN_FREE_DISK_MB ?? 4096)) return reply.code(503).send({ error: "Build capacity is temporarily unavailable" });
-  const build = await prisma.build.create({ data: { projectId: project.id, provider: report.provider, status: "QUEUED", mode } });
+  const admission = await prisma.$transaction(async (tx) => {
+    // Serialize the count-and-create check across API instances.
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(${buildAdmissionLockNamespace}, 1)`;
+    const activeStatuses = ["QUEUED", "PREPARING", "VALIDATING", "BUILDING", "PACKAGING", "UPLOADING"] as const;
+    const activeBuilds = await tx.build.count({ where: { project: { userId: user.id }, status: { in: [...activeStatuses] } } });
+    if (activeBuilds >= Number(process.env.MAX_CONCURRENT_BUILDS_PER_USER ?? 2)) {
+      return { status: 429, error: "Build concurrency limit reached; try again later" } as const;
+    }
+    const totalActiveBuilds = await tx.build.count({ where: { status: { in: [...activeStatuses] } } });
+    if (totalActiveBuilds >= Number(process.env.MAX_CONCURRENT_BUILDS ?? 2)) {
+      return { status: 429, error: "Build capacity is currently full; try again later" } as const;
+    }
+    const filesystem = await statfs(process.env.BUILD_WORKSPACE_ROOT ?? "/tmp");
+    const freeMb = (Number(filesystem.bavail) * Number(filesystem.bsize)) / (1024 * 1024);
+    if (freeMb < Number(process.env.BUILD_MIN_FREE_DISK_MB ?? 4096)) {
+      return { status: 503, error: "Build capacity is temporarily unavailable" } as const;
+    }
+    const build = await tx.build.create({ data: { projectId: project.id, provider: report.provider, status: "QUEUED", mode } });
+    return { build } as const;
+  });
+  if ("status" in admission) return reply.code(admission.status).send({ error: admission.error });
+  const { build } = admission;
   await queue.add(build.id, {
     buildId: build.id,
     projectId: project.id,

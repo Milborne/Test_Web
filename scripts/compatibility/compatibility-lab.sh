@@ -61,7 +61,7 @@ while IFS=$'\t' read -r id repository commit branch license_file project_dir; do
   [ -n "$version" ] || version="unknown"
   license_text="not-found"
   [ -n "$license_file" ] && license_text="$(head -1 "$project_dir/$license_file" | tr -d '\r' || true)"
-  printf '| %s | %s | `%s` | %s | %s | Verify upstream README | Not published automatically |\n' "$id" "$repository" "$commit" "$license_text" "See upstream" >> "$LICENSES"
+  printf '%s\n' "| $id | $repository | \`$commit\` | $license_text | See upstream | Not published automatically |" >> "$LICENSES"
 
   git -C "$project_dir" archive --format=zip --output="$project_report/source.zip" HEAD
   response="$(curl --fail --silent --show-error -b "$cookie" -H "x-csrf-token: $csrf" \

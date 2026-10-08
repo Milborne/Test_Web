@@ -22,7 +22,7 @@ const playerOrigin = process.env.PLAYER_ORIGIN ?? "http://localhost:3000";
 const previewProvider = createPreviewDeploymentProvider();
 const appFrameOrigins = [...new Set([appOrigin, appOrigin.replace("localhost", "127.0.0.1")])].join(" ");
 const rateBuckets = new Map<string, { count: number; reset: number }>();
-const buildAdmissionLockNamespace = 0x473257;
+const buildAdmissionLockKey = 0x473257000001n;
 app.addHook("onSend", async (_request, reply) => {
   reply.header("X-Content-Type-Options", "nosniff");
   reply.header("Referrer-Policy", "strict-origin-when-cross-origin");
@@ -144,7 +144,7 @@ app.post<{ Params: { id: string }; Body: { provider?: ProviderId; mode?: "PRODUC
   }
   const admission = await prisma.$transaction(async (tx) => {
     // Serialize the count-and-create check across API instances.
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(${buildAdmissionLockNamespace}, 1)`;
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(${buildAdmissionLockKey})`;
     const activeStatuses = ["QUEUED", "PREPARING", "VALIDATING", "BUILDING", "PACKAGING", "UPLOADING"] as const;
     const activeBuilds = await tx.build.count({ where: { project: { userId: user.id }, status: { in: [...activeStatuses] } } });
     if (activeBuilds >= Number(process.env.MAX_CONCURRENT_BUILDS_PER_USER ?? 2)) {

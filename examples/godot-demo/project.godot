@@ -1,6 +1,7 @@
 [application]
 config/name="Game2Web Godot Demo"
 run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.3")
 
 [display]
 window/size/viewport_width=640

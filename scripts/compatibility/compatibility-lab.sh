@@ -137,17 +137,20 @@ while IFS=$'\t' read -r id repository commit branch license_file project_dir; do
         if [ "$index_size" = "1" ]; then artifacts_status="PASS"; else artifacts_status="FAIL"; errors="index.html missing or empty"; fi
         if [ "$artifacts_status" = "PASS" ]; then
           slug="$(printf '%s' "$status_json" | json_field project slug)"
-          if curl --fail --silent --show-error "$API_URL/api/play/$slug/" | grep -q '<' \
-            && node "$ROOT/scripts/compatibility/player-check.mjs" "$APP_URL" "$slug"; then
-            if EXTERNAL_GAME_SLUG="$slug" npx playwright test "$ROOT/e2e/external-player.spec.ts" --reporter=line; then
-              player_status="PASS"
-            else
-              player_status="FAIL"
-              errors="external Playwright runtime validation failed"
-            fi
-          else
+          if ! player_html="$(curl --fail --silent --show-error "$API_URL/api/play/$slug/")"; then
             player_status="FAIL"
-            errors="temporary player did not return published HTML"
+            errors="published player request failed"
+          elif ! printf '%s' "$player_html" | grep -q '<'; then
+            player_status="FAIL"
+            errors="published player did not return HTML"
+          elif ! node "$ROOT/scripts/compatibility/player-check.mjs" "$APP_URL" "$slug"; then
+            player_status="FAIL"
+            errors="published player browser validation failed"
+          elif ! EXTERNAL_GAME_SLUG="$slug" npx playwright test "$ROOT/e2e/external-player.spec.ts" --reporter=line; then
+            player_status="FAIL"
+            errors="external Playwright runtime validation failed"
+          else
+            player_status="PASS"
           fi
         fi
       else

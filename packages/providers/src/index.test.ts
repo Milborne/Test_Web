@@ -65,7 +65,7 @@ test("requires adaptation when no Web export preset exists", async () => {
 
 test("accepts a valid Web preset and preserves its configured name", async () => {
   const result = preflightGodot(await fixture("valid-web"));
-  assert.equal(result.status, "SUPPORTED");
+  assert.equal(result.status, "SUPPORTED", [...result.errors, ...result.warnings].join(" "));
   assert.equal(result.webExportStatus, "WEB_EXPORT_READY");
   assert.equal(result.webExportPreset, "Browser build");
 });

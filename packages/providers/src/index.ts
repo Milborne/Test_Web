@@ -291,11 +291,21 @@ function detectGodotVersion(project: ProjectFile, files: ProjectFile[]): EngineV
 }
 
 function parseWebPresets(content: string) {
-  const sections = [...content.matchAll(/^\[preset\.\d+\]([\s\S]*?)(?=^\[|\s*$)/gm)];
+  const sections: string[] = [];
+  let current: string[] | undefined;
+  for (const line of content.split(/\r?\n/)) {
+    if (/^\[/.test(line)) {
+      if (current) sections.push(current.join("\n"));
+      current = /^\[preset\.\d+\]$/.test(line) ? [] : undefined;
+    } else if (current) {
+      current.push(line);
+    }
+  }
+  if (current) sections.push(current.join("\n"));
   return sections.flatMap((section) => {
-    const name = section[1].match(/^name\s*=\s*"([^"]+)"/m)?.[1];
-    const platform = section[1].match(/^platform\s*=\s*"([^"]+)"/m)?.[1];
-    const runnable = section[1].match(/^runnable\s*=\s*(true|false)/m)?.[1];
+    const name = section.match(/^name\s*=\s*"([^"]+)"/m)?.[1];
+    const platform = section.match(/^platform\s*=\s*"([^"]+)"/m)?.[1];
+    const runnable = section.match(/^runnable\s*=\s*(true|false)/m)?.[1];
     return platform === "Web" && name && runnable === "true" ? [{ name }] : [];
   });
 }

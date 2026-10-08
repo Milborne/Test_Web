@@ -11,6 +11,7 @@ projects:
     license: MIT
   - id: godot-platformer
     repository: https://github.com/SlayHorizon/godot-2d-platformer-demo.git
+    commit: 6944ec4c323dcbad470ff7654fec665f010f50d1
     expected_engine: godot
     license: MIT
   - id: roboblast

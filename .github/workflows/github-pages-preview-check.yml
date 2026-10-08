@@ -75,8 +75,10 @@ jobs:
       - name: Test deployed Godot runtime in Chromium
         run: npx playwright test e2e/github-pages-preview.spec.ts --reporter=line --browser chromium
       - name: Test deployed Godot runtime in Firefox
+        if: always()
         run: npx playwright test e2e/github-pages-preview.spec.ts --reporter=line --browser firefox
       - name: Test deployed Godot runtime in Microsoft Edge
+        if: always()
         env:
           PLAYWRIGHT_CHANNEL: msedge
         run: npx playwright test e2e/github-pages-preview.spec.ts --reporter=line --browser chromium

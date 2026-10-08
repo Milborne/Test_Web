@@ -76,6 +76,8 @@ jobs:
         run: npx playwright test e2e/github-pages-preview.spec.ts --reporter=line --browser chromium
       - name: Test deployed Godot runtime in Firefox
         if: always()
+        env:
+          PLAYWRIGHT_FIREFOX_WEBGL: "1"
         run: npx playwright test e2e/github-pages-preview.spec.ts --reporter=line --browser firefox
       - name: Test deployed Godot runtime in Microsoft Edge
         if: always()

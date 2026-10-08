@@ -2,6 +2,12 @@ name: Game2Web Compatibility Lab
 
 on:
   workflow_dispatch:
+    inputs:
+      persistent_preview:
+        description: "Create and revalidate a preview using configured durable staging infrastructure"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -12,13 +18,20 @@ jobs:
     timeout-minutes: 90
     env:
       COMPATIBILITY_LAB: "true"
-      DATABASE_URL: postgresql://game2web:game2web@localhost:5432/game2web
+      DATABASE_URL: ${{ inputs.persistent_preview && secrets.PREVIEW_DATABASE_URL || 'postgresql://game2web:game2web@localhost:5432/game2web' }}
       REDIS_URL: redis://localhost:6379
-      S3_ENDPOINT: http://localhost:9000
-      APP_ORIGIN: http://127.0.0.1:3000
-      PLAYER_ORIGIN: http://localhost:4000
+      S3_ENDPOINT: ${{ inputs.persistent_preview && secrets.PREVIEW_S3_ENDPOINT || 'http://localhost:9000' }}
+      S3_BUCKET: ${{ inputs.persistent_preview && secrets.PREVIEW_S3_BUCKET || 'game2web' }}
+      S3_ACCESS_KEY: ${{ inputs.persistent_preview && secrets.PREVIEW_S3_ACCESS_KEY || 'minioadmin' }}
+      S3_SECRET_KEY: ${{ inputs.persistent_preview && secrets.PREVIEW_S3_SECRET_KEY || 'minioadmin' }}
+      APP_ORIGIN: ${{ inputs.persistent_preview && secrets.PREVIEW_APP_ORIGIN || 'http://127.0.0.1:3000' }}
+      PLAYER_ORIGIN: ${{ inputs.persistent_preview && secrets.PREVIEW_PLAYER_ORIGIN || 'http://localhost:4000' }}
+      PREVIEW_APP_ORIGIN: ${{ inputs.persistent_preview && secrets.PREVIEW_APP_ORIGIN || 'http://127.0.0.1:3000' }}
+      PREVIEW_PERSISTENT: ${{ inputs.persistent_preview && 'true' || 'false' }}
+      PREVIEW_STORAGE_DURABLE: ${{ inputs.persistent_preview && 'true' || 'false' }}
+      COMPATIBILITY_REQUIRE_PERSISTENT_PREVIEW: ${{ inputs.persistent_preview && 'true' || 'false' }}
       NEXT_PUBLIC_API_URL: http://127.0.0.1:4000
-      NEXT_PUBLIC_PLAYER_ORIGIN: http://localhost:4000
+      NEXT_PUBLIC_PLAYER_ORIGIN: ${{ inputs.persistent_preview && secrets.PREVIEW_PLAYER_ORIGIN || 'http://localhost:4000' }}
       COMPATIBILITY_PROJECTS: godot-platformer
       COMPATIBILITY_REQUIRED_PROJECT: godot-platformer
     steps:
@@ -27,6 +40,21 @@ jobs:
         run: |
           test "$APP_ORIGIN" != "$PLAYER_ORIGIN"
           test "$(node -p 'new URL(process.env.APP_ORIGIN).hostname')" != "$(node -p 'new URL(process.env.PLAYER_ORIGIN).hostname')"
+      - name: Verify persistent preview configuration
+        if: inputs.persistent_preview
+        env:
+          PERSISTENT_DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL }}
+          PERSISTENT_S3_ENDPOINT: ${{ secrets.PREVIEW_S3_ENDPOINT }}
+          PERSISTENT_S3_BUCKET: ${{ secrets.PREVIEW_S3_BUCKET }}
+          PERSISTENT_S3_ACCESS_KEY: ${{ secrets.PREVIEW_S3_ACCESS_KEY }}
+          PERSISTENT_S3_SECRET_KEY: ${{ secrets.PREVIEW_S3_SECRET_KEY }}
+          PERSISTENT_APP_ORIGIN: ${{ secrets.PREVIEW_APP_ORIGIN }}
+          PERSISTENT_PLAYER_ORIGIN: ${{ secrets.PREVIEW_PLAYER_ORIGIN }}
+        run: |
+          for value in "$PERSISTENT_DATABASE_URL" "$PERSISTENT_S3_ENDPOINT" "$PERSISTENT_S3_BUCKET" "$PERSISTENT_S3_ACCESS_KEY" "$PERSISTENT_S3_SECRET_KEY" "$PERSISTENT_APP_ORIGIN" "$PERSISTENT_PLAYER_ORIGIN"; do
+            test -n "$value" || { echo "Persistent preview requires all PREVIEW_* GitHub secrets"; exit 1; }
+          done
+          node -e 'for (const key of ["PERSISTENT_S3_ENDPOINT", "PERSISTENT_APP_ORIGIN", "PERSISTENT_PLAYER_ORIGIN"]) { const url=new URL(process.env[key]); if (url.protocol !== "https:") throw new Error(`${key} must use HTTPS`); if (["localhost","127.0.0.1","::1"].includes(url.hostname)) throw new Error(`${key} must be externally reachable`); } if (new URL(process.env.PERSISTENT_APP_ORIGIN).hostname === new URL(process.env.PERSISTENT_PLAYER_ORIGIN).hostname) throw new Error("App and player hostnames must differ so host-only authentication cookies cannot reach the player");'
       - uses: actions/setup-node@v4
         with:
           node-version: 22.11.0
@@ -37,7 +65,12 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: docker compose -f infra/docker-compose.yml up -d --wait
       - run: docker build --file builders/godot-4.4/Dockerfile --tag game2web/godot-builder:4.4.0 .
-      - run: npx prisma db push --schema packages/database/prisma/schema.prisma
+      - name: Prepare ephemeral Compatibility Lab database
+        if: ${{ !inputs.persistent_preview }}
+        run: npx prisma db push --schema packages/database/prisma/schema.prisma
+      - name: Generate Prisma client for configured persistent staging database
+        if: inputs.persistent_preview
+        run: npx prisma generate --schema packages/database/prisma/schema.prisma
       - name: Start API, worker and web
         run: |
           npm run dev --workspace apps/api > api.log 2>&1 &
@@ -54,6 +87,14 @@ jobs:
         run: docker compose -f infra/docker-compose.yml logs --no-color > compose.log || true
       - if: always()
         run: docker compose -f infra/docker-compose.yml down -v
+      - name: Revalidate persistent preview after local infrastructure teardown
+        if: always() && inputs.persistent_preview
+        run: |
+          test -s .validation/preview-url.txt || { echo "Persistent preview URL artifact is missing"; exit 1; }
+          preview_url="$(sed -n '2p' .validation/preview-url.txt)"
+          test -n "$preview_url"
+          PREVIEW_URL="$preview_url" node -e 'const url=new URL(process.env.PREVIEW_URL); if (url.protocol !== "https:" || url.origin !== new URL(process.env.PREVIEW_APP_ORIGIN).origin || !url.pathname.startsWith("/preview/")) throw new Error("The saved preview URL does not match the configured HTTPS preview origin");'
+          EXTERNAL_GAME_PREVIEW_URL="$preview_url" npx playwright test e2e/external-player.spec.ts --reporter=line
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -61,6 +102,7 @@ jobs:
           path: |
             tests/compatibility/reports
             .validation/playwright-report
+            .validation/preview-url.txt
             test-results
             api.log
             worker.log

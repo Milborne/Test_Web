@@ -3,7 +3,7 @@ export interface DeploymentProvider {
 }
 
 export interface PreviewDeploymentProvider {
-  create(input: { previewId: string; buildId: string; token: string }): Promise<{ storagePrefix: string; playerPath: string }>;
+  create(input: { projectId: string; previewId: string; buildId: string; token: string }): Promise<{ storagePrefix: string; playerPath: string }>;
 }
 
 export class LocalStaticDeploymentProvider implements DeploymentProvider {
@@ -21,9 +21,9 @@ export class PublicStaticDeploymentProvider extends LocalStaticDeploymentProvide
 
 export class LocalPreviewDeploymentProvider implements PreviewDeploymentProvider {
   constructor(private readonly playerOrigin = process.env.PLAYER_ORIGIN ?? "http://localhost:4000") {}
-  async create(input: { previewId: string; buildId: string; token: string }) {
+  async create(input: { projectId: string; previewId: string; buildId: string; token: string }) {
     return {
-      storagePrefix: `previews/${input.previewId}/${input.buildId}`,
+      storagePrefix: `previews/${input.projectId}/${input.buildId}/${input.previewId}`,
       playerPath: `${this.playerOrigin}/api/preview/${encodeURIComponent(input.token)}/`
     };
   }

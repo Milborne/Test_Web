@@ -144,15 +144,30 @@ new Worker("game-builds", async (job) => {
 
 async function cleanupExpiredPreviews() {
   const expired = await prisma.previewDeployment.findMany({
-    where: { OR: [{ expiresAt: { lte: new Date() } }, { revokedAt: { not: null } }] },
+    where: {
+      OR: [
+        { status: "DELETING" },
+        { status: "READY", expiresAt: { lte: new Date() } },
+        { status: "READY", revokedAt: { not: null } },
+        { status: "CREATING", expiresAt: { lte: new Date() } }
+      ]
+    },
     include: { build: { include: { artifacts: true } } }
   });
+  const failures: Error[] = [];
   for (const preview of expired) {
-    for (const artifact of preview.build.artifacts) {
-      await deleteObject(`${preview.storagePrefix}/${artifact.path}`);
+    try {
+      await prisma.previewDeployment.update({ where: { id: preview.id }, data: { status: "DELETING" } });
+      for (const artifact of preview.build.artifacts) {
+        await deleteObject(`${preview.storagePrefix}/${artifact.path}`);
+      }
+      await prisma.previewDeployment.delete({ where: { id: preview.id } });
+    } catch (error) {
+      console.error("Preview cleanup failed; the preview will be retried", { previewId: preview.id, error });
+      failures.push(error instanceof Error ? error : new Error(String(error)));
     }
-    await prisma.previewDeployment.delete({ where: { id: preview.id } });
   }
+  if (failures.length > 0) throw new AggregateError(failures, `Failed to clean up ${failures.length} preview(s)`);
 }
 
 async function update(buildId: string, status: "PREPARING" | "VALIDATING" | "BUILDING" | "PACKAGING" | "UPLOADING", message: string) {

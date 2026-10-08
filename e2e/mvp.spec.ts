@@ -67,6 +67,19 @@ test("Godot upload, build, deployment and player", async ({ page, request, playw
   const preview = await previewResponse.json();
   expect(preview.persistent).toBe(false);
   expect(preview.expiresAt).toBeTruthy();
+  expect(preview.technicalStatus).toBe("READY");
+  expect(preview.redistributionStatus).toBe("REDISTRIBUTION_CLEARED");
+  expect(await prisma.previewDeployment.findUnique({ where: { id: preview.id } }).then((record) => record?.status)).toBe("READY");
+  const originalPreviewToken = new URL(preview.url).pathname.split("/").at(-1);
+  const linkResponse = await request.post(`${api}/api/builds/${previewBuild.id}/previews/link`, { headers, data: {} });
+  expect(linkResponse.status()).toBe(200);
+  const recoveredLink = await linkResponse.json();
+  expect(recoveredLink.id).toBe(preview.id);
+  expect((await request.get(`${api}/api/preview/${originalPreviewToken}/`)).status()).toBe(404);
+  preview.url = recoveredLink.url;
+  await prisma.previewDeployment.update({ where: { id: preview.id }, data: { status: "CREATING" } });
+  expect((await request.get(`${api}/api/preview/${new URL(preview.url).pathname.split("/").at(-1)}/`)).status()).toBe(404);
+  await prisma.previewDeployment.update({ where: { id: preview.id }, data: { status: "READY" } });
   const previewIndex = await request.get(`${api}/api/preview/${new URL(preview.url).pathname.split("/").at(-1)}/`);
   expect(previewIndex.ok()).toBeTruthy();
   expect(previewIndex.headers()["cache-control"]).toContain("no-store");
@@ -84,6 +97,7 @@ test("Godot upload, build, deployment and player", async ({ page, request, playw
   const otherAuth = await otherUser.post(`${api}/api/auth/register`, { data: { email: `preview-other-${Date.now()}@example.test`, password: "correct horse battery" } });
   const otherCsrf = otherAuth.headers()["set-cookie"].match(/game2web_csrf=([^;]+)/)?.[1] ?? "";
   expect((await otherUser.delete(`${api}/api/previews/${preview.id}`, { headers: { "x-csrf-token": otherCsrf } })).status()).toBe(404);
+  expect((await otherUser.post(`${api}/api/builds/${previewBuild.id}/previews/link`, { headers: { "x-csrf-token": otherCsrf }, data: {} })).status()).toBe(404);
   await otherUser.dispose();
   expect((await request.delete(`${api}/api/previews/${preview.id}`, { headers })).status()).toBe(204);
   expect((await request.get(`${api}/api/preview/${new URL(preview.url).pathname.split("/").at(-1)}/`)).status()).toBe(404);

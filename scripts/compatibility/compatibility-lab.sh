@@ -150,9 +150,16 @@ while IFS=$'\t' read -r id repository commit branch license_file project_dir cod
           player_path="$(printf '%s' "$preview_response" | json_field playerPath || true)"
           preview_id="$(printf '%s' "$preview_response" | json_field id || true)"
           preview_persistent="$(printf '%s' "$preview_response" | json_field persistent || true)"
+          if [ -n "$preview_url" ] && [ "$preview_persistent" = "true" ]; then
+            mkdir -p "$ROOT/.validation"
+            printf 'Preview URL:\n%s\n' "$preview_url" > "$ROOT/.validation/preview-url.txt"
+          fi
           if [ -z "$preview_url" ] || [ -z "$player_path" ] || [ -z "$preview_id" ]; then
             player_status="FAIL"
             errors="preview deployment creation failed"
+          elif [ "${COMPATIBILITY_REQUIRE_PERSISTENT_PREVIEW:-false}" = "true" ] && [ "$preview_persistent" != "true" ]; then
+            player_status="FAIL"
+            errors="persistent preview was required but the API did not confirm durable HTTPS infrastructure"
           elif ! player_html="$(curl --fail --silent --show-error "$player_path")"; then
             player_status="FAIL"
             errors="temporary preview player request failed"

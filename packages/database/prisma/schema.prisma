@@ -29,6 +29,12 @@ enum RedistributionStatus {
   REDISTRIBUTION_CLEARED
 }
 
+enum PreviewStatus {
+  CREATING
+  READY
+  DELETING
+}
+
 model User {
   id           String    @id @default(cuid())
   email        String    @unique
@@ -149,6 +155,9 @@ model PreviewDeployment {
   build         Build    @relation(fields: [buildId], references: [id], onDelete: Cascade)
   tokenHash     String   @unique
   storagePrefix String   @unique
+  status        PreviewStatus @default(READY)
+  technicalStatus BuildStatus @default(READY)
+  redistributionStatus RedistributionStatus @default(LICENSE_REVIEW_REQUIRED)
   expiresAt     DateTime
   revokedAt     DateTime?
   createdAt     DateTime @default(now())

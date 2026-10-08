@@ -16,11 +16,12 @@ import { statfs } from "node:fs/promises";
 const prisma = new PrismaClient();
 const queue = new Queue("game-builds", { connection: { url: process.env.REDIS_URL ?? "redis://localhost:6379" } });
 const limits = { maxBytes: Number(process.env.BUILD_MAX_UPLOAD_MB ?? 500) * 1024 * 1024, maxFiles: Number(process.env.BUILD_MAX_FILES ?? 10_000), maxExpandedBytes: Number(process.env.BUILD_MAX_EXPANDED_SOURCE_MB ?? 1024) * 1024 * 1024, maxCompressionRatio: Number(process.env.BUILD_MAX_COMPRESSION_RATIO ?? 100) };
-const app = Fastify({ logger: true });
+const app = Fastify({ logger: { redact: ["req.url"] } });
 const appOrigin = process.env.APP_ORIGIN ?? "http://localhost:3000";
 const playerOrigin = process.env.PLAYER_ORIGIN ?? "http://localhost:3000";
+const previewAppOrigin = process.env.PREVIEW_APP_ORIGIN ?? appOrigin;
 const previewProvider = createPreviewDeploymentProvider();
-const appFrameOrigins = [...new Set([appOrigin, appOrigin.replace("localhost", "127.0.0.1")])].join(" ");
+const appFrameOrigins = [...new Set([appOrigin, previewAppOrigin, appOrigin.replace("localhost", "127.0.0.1")])].join(" ");
 const rateBuckets = new Map<string, { count: number; reset: number }>();
 const buildAdmissionLockKey = 0x473257000001n;
 app.addHook("onSend", async (_request, reply) => {
@@ -80,7 +81,14 @@ app.get("/api/auth/me", async (request, reply) => { const user = await requireUs
 app.get("/api/projects", async (request, reply) => {
   const user = await requireUser(request, reply);
   if (!user) return;
-  return prisma.project.findMany({ where: { userId: user.id }, orderBy: { createdAt: "desc" }, select: { id: true, slug: true, name: true, description: true, createdAt: true, builds: { orderBy: { createdAt: "desc" }, take: 1 } } });
+  return prisma.project.findMany({
+    where: { userId: user.id },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true, slug: true, name: true, description: true, createdAt: true,
+      builds: { orderBy: { createdAt: "desc" }, take: 1, select: { id: true, provider: true, status: true, mode: true, preview: { select: { id: true, status: true, expiresAt: true } } } }
+    }
+  });
 });
 
 app.post("/api/projects", async (request, reply) => {
@@ -194,32 +202,30 @@ app.post<{ Params: { id: string } }>("/api/builds/:id/previews", async (request,
     where: { buildId: build.id },
     include: { build: { include: { artifacts: true } } }
   });
-  if (previousPreview && !previousPreview.revokedAt && previousPreview.expiresAt > new Date()) {
-    return reply.code(409).send({ error: "An active preview already exists for this build" });
-  }
   if (previousPreview) {
-    for (const artifact of previousPreview.build.artifacts) {
-      await deleteObject(`${previousPreview.storagePrefix}/${artifact.path}`);
-    }
-    await prisma.previewDeployment.delete({ where: { id: previousPreview.id } });
+    const active = previousPreview.status === "READY" && !previousPreview.revokedAt && previousPreview.expiresAt > new Date();
+    return reply.code(409).send({ error: active ? "An active preview already exists for this build" : "The previous preview is being cleaned up; retry after cleanup completes" });
   }
-  const ttlHours = Number(process.env.PREVIEW_TTL_HOURS ?? 24);
-  if (!Number.isFinite(ttlHours) || ttlHours < 1 || ttlHours > 168) return reply.code(500).send({ error: "PREVIEW_TTL_HOURS must be between 1 and 168" });
+  const ttlSeconds = previewTtlSeconds();
+  if (ttlSeconds === undefined) return reply.code(500).send({ error: "Configure PREVIEW_TTL_HOURS between 1 and 168 or PREVIEW_TTL_SECONDS between 1 and 604800" });
 
   const previewId = randomUUID();
   const token = randomBytes(32).toString("base64url");
   const tokenHash = createHash("sha256").update(token).digest("hex");
-  const location = await previewProvider.create({ previewId, buildId: build.id, token });
-  const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000);
+  const location = await previewProvider.create({ projectId: build.projectId, previewId, buildId: build.id, token });
+  const creationExpiry = new Date(Date.now() + ttlSeconds * 1000 + 24 * 60 * 60 * 1000);
+  const previewOrigin = process.env.PREVIEW_APP_ORIGIN ?? appOrigin;
   await prisma.previewDeployment.create({ data: {
     id: previewId,
     projectId: build.projectId,
     buildId: build.id,
     tokenHash,
     storagePrefix: location.storagePrefix,
-    expiresAt
+    expiresAt: creationExpiry,
+    status: "CREATING",
+    technicalStatus: "READY",
+    redistributionStatus: build.project.redistributionStatus
   } });
-  const copiedKeys: string[] = [];
   try {
     for (const artifact of build.artifacts) {
       const privatePrefix = `private/${build.projectId}/${build.id}/`;
@@ -228,28 +234,57 @@ app.post<{ Params: { id: string } }>("/api/builds/:id/previews", async (request,
       const checksum = createHash("sha256").update(object.body).digest("hex");
       if (checksum !== artifact.checksum) throw new Error(`Preview artifact checksum mismatch: ${artifact.path}`);
       const stored = await putObject(`${location.storagePrefix}/${artifact.path}`, object.body, artifact.mimeType);
-      copiedKeys.push(stored.key);
       if (stored.checksum !== artifact.checksum) throw new Error(`Preview artifact copy checksum mismatch: ${artifact.path}`);
     }
+    const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
+    await prisma.previewDeployment.update({ where: { id: previewId }, data: { status: "READY", expiresAt } });
+    return reply.code(201).send({
+      id: previewId,
+      buildId: build.id,
+      technicalStatus: "READY",
+      redistributionStatus: build.project.redistributionStatus,
+      url: `${previewOrigin}/preview/${token}`,
+      playerPath: location.playerPath,
+      expiresAt: expiresAt.toISOString(),
+      persistent: previewIsPersistent()
+    });
   } catch (error) {
-    for (const key of copiedKeys) await deleteObject(key);
-    await prisma.previewDeployment.delete({ where: { id: previewId } });
+    try {
+      await removePreviewArtifacts(location.storagePrefix, build.artifacts);
+      await prisma.previewDeployment.delete({ where: { id: previewId } });
+    } catch (cleanupError) {
+      await prisma.previewDeployment.update({ where: { id: previewId }, data: { status: "DELETING" } });
+      request.log.error({ err: cleanupError, previewId }, "Failed to clean up an incomplete preview; background cleanup will retry");
+    }
     throw error;
   }
-
-  const previewOrigin = process.env.PREVIEW_APP_ORIGIN ?? appOrigin;
-  const persistent = process.env.PREVIEW_PERSISTENT === "true"
-    && /^https:\/\//i.test(previewOrigin)
-    && /^https:\/\//i.test(playerOrigin)
-    && /^https:\/\//i.test(process.env.S3_ENDPOINT ?? "");
-  return reply.code(201).send({
-    id: previewId,
-    buildId: build.id,
-    url: `${previewOrigin}/preview/${token}`,
-    playerPath: location.playerPath,
-    expiresAt: expiresAt.toISOString(),
-    persistent
+});
+app.post<{ Params: { id: string } }>("/api/builds/:id/previews/link", async (request, reply) => {
+  const user = await requireUser(request, reply);
+  if (!user) return;
+  const build = await prisma.build.findFirst({
+    where: { id: request.params.id, mode: "PREVIEW", project: { userId: user.id } },
+    include: { project: true, preview: true }
   });
+  const preview = build?.preview;
+  if (!build || !preview || preview.status !== "READY" || preview.revokedAt || preview.expiresAt <= new Date() || build.status !== "READY") {
+    return reply.code(404).send({ error: "Active preview not found" });
+  }
+  const token = randomBytes(32).toString("base64url");
+  await prisma.previewDeployment.update({
+    where: { id: preview.id },
+    data: { tokenHash: createHash("sha256").update(token).digest("hex") }
+  });
+  const previewOrigin = process.env.PREVIEW_APP_ORIGIN ?? appOrigin;
+  return {
+    id: preview.id,
+    buildId: build.id,
+    technicalStatus: preview.technicalStatus,
+    redistributionStatus: preview.redistributionStatus,
+    url: `${previewOrigin}/preview/${token}`,
+    expiresAt: preview.expiresAt.toISOString(),
+    persistent: previewIsPersistent()
+  };
 });
 app.delete<{ Params: { id: string } }>("/api/previews/:id", async (request, reply) => {
   const user = await requireUser(request, reply);
@@ -259,10 +294,16 @@ app.delete<{ Params: { id: string } }>("/api/previews/:id", async (request, repl
     include: { build: { include: { artifacts: true } } }
   });
   if (!preview) return reply.code(404).send({ error: "Preview not found" });
-  for (const artifact of preview.build.artifacts) {
-    await deleteObject(`${preview.storagePrefix}/${artifact.path}`);
+  if (preview.status !== "DELETING") {
+    await prisma.previewDeployment.update({ where: { id: preview.id }, data: { status: "DELETING", revokedAt: new Date() } });
   }
-  await prisma.previewDeployment.delete({ where: { id: preview.id } });
+  try {
+    await removePreviewArtifacts(preview.storagePrefix, preview.build.artifacts);
+    await prisma.previewDeployment.delete({ where: { id: preview.id } });
+  } catch (error) {
+    request.log.error({ err: error, previewId: preview.id }, "Preview revocation cleanup failed; background cleanup will retry");
+    return reply.code(503).send({ error: "Preview revocation is pending cleanup; it is no longer accessible" });
+  }
   return reply.code(204).send();
 });
 app.get<{ Params: { id: string } }>("/api/builds/:id", async (request, reply) => {
@@ -292,7 +333,7 @@ app.get<{ Params: { token: string; "*": string } }>("/api/preview/:token/*", asy
     where: { tokenHash },
     include: { build: { include: { artifacts: true } } }
   });
-  if (!preview || preview.revokedAt || preview.expiresAt <= new Date() || preview.build.status !== "READY") {
+  if (!preview || preview.status !== "READY" || preview.revokedAt || preview.expiresAt <= new Date() || preview.build.status !== "READY") {
     return reply.code(404).send({ error: "Preview not found or expired" });
   }
   const requested = request.params["*"] || "index.html";
@@ -302,10 +343,53 @@ app.get<{ Params: { token: string; "*": string } }>("/api/preview/:token/*", asy
   if (!artifact || !artifact.storageKey.startsWith(`private/${preview.projectId}/${preview.buildId}/`)) return reply.code(404).send({ error: "Preview artifact not found" });
   const object = await getObject(`${preview.storagePrefix}/${safePath}`);
   reply.header("Cache-Control", "private, no-store");
-  reply.header("Content-Security-Policy", `default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; frame-ancestors ${appOrigin}`);
+  reply.header("Content-Security-Policy", `default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; frame-ancestors ${[appOrigin, previewAppOrigin].join(" ")}`);
   reply.header("Cross-Origin-Resource-Policy", "cross-origin");
   return reply.type(contentType(safePath, object.contentType)).send(object.body);
 });
+
+async function removePreviewArtifacts(storagePrefix: string, artifacts: Array<{ path: string }>) {
+  for (const artifact of artifacts) await deleteObject(`${storagePrefix}/${artifact.path}`);
+}
+
+function previewTtlSeconds(): number | undefined {
+  const configuredSeconds = process.env.PREVIEW_TTL_SECONDS;
+  if (configuredSeconds !== undefined) {
+    const seconds = Number(configuredSeconds);
+    return Number.isInteger(seconds) && seconds >= 1 && seconds <= 604_800 ? seconds : undefined;
+  }
+  const hours = Number(process.env.PREVIEW_TTL_HOURS ?? 24);
+  return Number.isFinite(hours) && hours >= 1 && hours <= 168 ? hours * 60 * 60 : undefined;
+}
+
+function isHttpsOrigin(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.pathname === "/" && !url.search && !url.hash;
+  } catch {
+    return false;
+  }
+}
+
+function isIsolatedPlayerHostname(applicationOrigin: string, previewOrigin: string, publicPlayerOrigin: string): boolean {
+  try {
+    const playerHost = new URL(publicPlayerOrigin).hostname;
+    return new URL(applicationOrigin).hostname !== playerHost && new URL(previewOrigin).hostname !== playerHost;
+  } catch {
+    return false;
+  }
+}
+
+function previewIsPersistent(): boolean {
+  const previewOrigin = process.env.PREVIEW_APP_ORIGIN ?? appOrigin;
+  return process.env.PREVIEW_PERSISTENT === "true"
+    && process.env.PREVIEW_STORAGE_DURABLE === "true"
+    && isHttpsOrigin(appOrigin)
+    && isHttpsOrigin(previewOrigin)
+    && isHttpsOrigin(playerOrigin)
+    && isIsolatedPlayerHostname(appOrigin, previewOrigin, playerOrigin)
+    && isHttpsOrigin(process.env.S3_ENDPOINT ?? "");
+}
 
 function archiveEntries(buffer: Buffer): ProjectFile[] {
   const zip = new AdmZip(buffer);

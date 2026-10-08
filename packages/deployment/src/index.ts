@@ -8,3 +8,13 @@ export class LocalStaticDeploymentProvider implements DeploymentProvider {
     return { publishedPrefix: `published/${input.projectId}/${input.buildId}`, publicPath: `${this.baseUrl}/api/play/${encodeURIComponent(input.projectSlug)}/` };
   }
 }
+
+export class PublicStaticDeploymentProvider extends LocalStaticDeploymentProvider {
+  constructor() {
+    super(process.env.PLAYER_ORIGIN ?? "http://localhost:3000");
+  }
+}
+
+export function createDeploymentProvider(): DeploymentProvider {
+  return process.env.DEPLOYMENT_PROVIDER === "public" ? new PublicStaticDeploymentProvider() : new LocalStaticDeploymentProvider();
+}

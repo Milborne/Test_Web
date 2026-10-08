@@ -1,0 +1,24 @@
+projects:
+  - id: turn-based-rpg
+    repository: https://github.com/corndogit/Turn-based_RPG.git
+    expected_engine: godot
+    expected_min_version: "4.0"
+    license: MIT
+  - id: godot-runner
+    repository: https://github.com/hman278/Godot-Runner-Game.git
+    expected_engine: godot
+    license: MIT
+  - id: godot-platformer
+    repository: https://github.com/SlayHorizon/godot-2d-platformer-demo.git
+    expected_engine: godot
+    license: MIT
+  - id: roboblast
+    repository: https://github.com/realkotob/ggj-2024.git
+    expected_engine: godot
+    code_license: MIT
+    asset_license: CC-BY-4.0
+  - id: gdquest-arpg
+    repository: https://github.com/gdquest-demos/godot-make-pro-2d-games.git
+    expected_engine: godot
+    expected_version: "3.1"
+    license: MIT

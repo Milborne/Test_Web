@@ -9,8 +9,10 @@
     "typecheck": "npm run build --workspace packages/shared && npm run build --workspace packages/providers && npm run build --workspace packages/storage && npm run build --workspace packages/deployment && npm run typecheck --workspace packages/database && npx prisma generate --schema packages/database/prisma/schema.prisma && npm run typecheck --workspace apps/api && npm run typecheck --workspace apps/worker && npm run typecheck --workspace apps/web",
     "lint": "eslint --ignore-pattern dist --ignore-pattern .next .",
     "security:test": "bash scripts/security-check.sh",
+    "image-policy": "bash scripts/check-image-policy.sh",
     "e2e": "npm run prepare:e2e && playwright test",
-    "prepare:e2e": "bash scripts/prepare-e2e-fixture.sh"
+    "prepare:e2e": "bash scripts/prepare-e2e-fixture.sh",
+    "compatibility:lab": "bash scripts/compatibility/compatibility-lab.sh"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

@@ -22,17 +22,26 @@ export class EmscriptenSdlProvider implements BuildProvider {
     const configured = has(files, "game2web.yml");
     const cmake = has(files, "CMakeLists.txt");
     const source = files.some((file) => /\.(c|cc|cpp|h|hpp)$/i.test(file.path));
+    const sdlEvidence = configured && cmake;
     return {
-      provider: this.id, engine: "C/C++ with Emscripten", confidence: configured || cmake ? "high" : "low",
-      compatible: (configured || cmake) && source,
-      reasons: cmake ? ["CMakeLists.txt detected"] : configured ? ["game2web.yml explicitly selects this provider"] : ["No CMake project was found"],
+      provider: this.id, engine: "C/C++ + SDL", confidence: sdlEvidence ? "high" : cmake || configured ? "medium" : "low",
+      compatible: sdlEvidence && source,
+      reasons: sdlEvidence ? ["game2web.yml selects emscripten-sdl", "CMakeLists.txt detected"] : ["A CMake project and explicit emscripten-sdl configuration are required"],
       warnings: source ? [] : ["No C/C++ source files were detected"]
     };
   }
   async validate(files: ProjectFile[]) { return this.detect(files); }
   async build(context: BuildContext) {
     context.log("Starting isolated Emscripten builder");
-    await execFileAsync("docker", ["run", "--rm", "--network=none", "--cap-drop=ALL", "--security-opt", "no-new-privileges:true", "--pids-limit", String(context.limits.maxPids), "--cpus", String(context.limits.maxCpus), "--memory", `${context.limits.maxMemoryMb}m`, "--user", "1000:1000", "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=512m", "-v", `${context.sourceDirectory}:/src:ro`, "-v", `${context.outputDirectory}:/out`, "game2web/emscripten-builder:3.1.74"], { timeout: context.limits.maxBuildMinutes * 60_000 });
+    try {
+      const result = await execFileAsync("docker", ["run", "--rm", "--network=none", "--cap-drop=ALL", "--security-opt", "no-new-privileges:true", "--pids-limit", String(context.limits.maxPids), "--cpus", String(context.limits.maxCpus), "--memory", `${context.limits.maxMemoryMb}m`, "--user", "1000:1000", "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=512m", "-e", "HOME=/tmp",             "-e", "EM_CACHE=/tmp/emscripten-cache", "-v", `${context.sourceDirectory}:/src:ro`, "-v", `${context.outputDirectory}:/out`, process.env.EMSCRIPTEN_BUILDER_IMAGE ?? "game2web/emscripten-builder:3.1.74"], { timeout: context.limits.maxBuildMinutes * 60_000 });
+      context.log(result.stdout);
+    } catch (error) {
+      const output = error as { stdout?: string; stderr?: string };
+      context.log(output.stdout ?? "");
+      context.log(output.stderr ?? "");
+      throw error;
+    }
   }
   async collectArtifacts(outputDirectory: string) { return listArtifacts(outputDirectory); }
 }

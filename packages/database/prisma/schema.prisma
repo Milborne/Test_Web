@@ -119,6 +119,7 @@ model Deployment {
   build           Build    @relation(fields: [buildId], references: [id])
   slug            String   @unique
   version         Int
+  published       Boolean  @default(false)
   publishedPrefix String
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt

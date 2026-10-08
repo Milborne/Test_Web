@@ -21,7 +21,7 @@ services:
       timeout: 3s
       retries: 20
   minio:
-    image: cgr.dev/chainguard/minio:latest
+    image: ${MINIO_IMAGE:-cgr.dev/chainguard/minio:latest}
     command: ["server", "--console-address", ":9001", "/data"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}

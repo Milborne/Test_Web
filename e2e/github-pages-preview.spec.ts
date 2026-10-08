@@ -72,8 +72,18 @@ test("deployed GitHub Pages preview initializes the Godot runtime", async ({ pag
   await page.keyboard.press("Tab");
   await expect(startButton).toBeFocused();
   expect(await godotAudioStates(page.mainFrame())).not.toContain("running");
-  await page.keyboard.press("Enter");
-  await expect(page.locator("#game2web-start-overlay")).toBeHidden({ timeout: 60_000 });
+  await startButton.press("Enter");
+  await expect.poll(async () => ({
+    ...(await page.evaluate(() => ({
+      overlayHidden: document.getElementById("game2web-start-overlay")?.hidden ?? false,
+      buttonText: document.getElementById("game2web-start-button")?.textContent ?? null,
+      runtime: document.documentElement.dataset.game2webRuntime ?? null,
+      notice: document.getElementById("status-notice")?.textContent ?? null
+    }))),
+    pageErrors: runtimeErrors,
+    audio: await godotAudioDiagnostics(page.mainFrame()),
+    unhandledRejections: await godotUnhandledRejections(page.mainFrame())
+  }), { timeout: 60_000 }).toMatchObject({ overlayHidden: true });
   await expect(page.locator("canvas")).toBeVisible({ timeout: 60_000 });
   await expect.poll(async () => page.locator("canvas").evaluate((canvas: HTMLCanvasElement) => canvas.width * canvas.height), { timeout: 60_000 }).toBeGreaterThan(0);
   await expect.poll(() => godotAudioStates(page.mainFrame()), { timeout: 60_000 }).toContain("running");
@@ -110,8 +120,6 @@ test("deployed GitHub Pages preview initializes the Godot runtime", async ({ pag
   await expect.poll(() => page.evaluate(() => Boolean(document.fullscreenElement)), { timeout: 10_000 }).toBe(false);
   for (const key of ["Q", "E", "R", "T", "Y", "F", "G"]) await page.keyboard.press(key);
   expect((await godotKeyEvents(page.mainFrame())).slice(-7).map((event) => event.code)).toEqual(["KeyQ", "KeyE", "KeyR", "KeyT", "KeyY", "KeyF", "KeyG"]);
-  await expect.poll(() => godotAudioDiagnostics(page.mainFrame()).then((diagnostics) => diagnostics.events.some((event) => event.event === "worklet-module-loaded")), { timeout: 10_000 }).toBe(true);
-  await expect.poll(() => workletResponses.length, { timeout: 10_000 }).toBeGreaterThan(0);
   const browserDiagnostics = {
     browserName: page.context().browser()?.browserType().name() ?? "unknown",
     browserVersion: page.context().browser()?.version() ?? "unknown",
@@ -122,6 +130,13 @@ test("deployed GitHub Pages preview initializes the Godot runtime", async ({ pag
     failedWorkletRequests,
     unhandledRejections: await godotUnhandledRejections(page.mainFrame())
   };
+  console.log(`Persistent preview runtime diagnostics: ${JSON.stringify(browserDiagnostics)}`);
+  const workletEvents = browserDiagnostics.audio.events.filter((event) => typeof event.event === "string" && event.event.startsWith("worklet-module-"));
+  expect(workletEvents.some((event) => event.event === "worklet-module-loaded"), JSON.stringify(browserDiagnostics, null, 2)).toBe(true);
+  const httpWorkletUrls = workletEvents
+    .filter((event) => event.event === "worklet-module-requested" && typeof event.url === "string" && /^https?:/i.test(event.url))
+    .map((event) => String(event.url));
+  expect(httpWorkletUrls.every((url) => workletResponses.some((response) => response.url === url)), JSON.stringify(browserDiagnostics, null, 2)).toBe(true);
   expect(workletResponses.every((result) => result.status === 200 && result.sameOrigin && result.contentType.includes("javascript")), JSON.stringify(browserDiagnostics, null, 2)).toBe(true);
   expect(runtimeErrors, `fatal browser runtime errors:\n${JSON.stringify({ runtimeErrors, browserDiagnostics }, null, 2)}`).toEqual([]);
   expect(await godotUnhandledRejections(page.mainFrame()), JSON.stringify(browserDiagnostics, null, 2)).toEqual([]);

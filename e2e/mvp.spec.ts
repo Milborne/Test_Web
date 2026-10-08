@@ -99,10 +99,11 @@ test("Godot upload, build, deployment and player", async ({ page, request, playw
   javascriptResponses.length = 0;
   await page.goto(preview.url);
   const previewFrame = page.frameLocator("iframe");
-  const previewGameFrame = page.frames().find((candidate) => candidate.url().includes(`/api/preview/${new URL(preview.url).pathname.split("/").at(-1)}/`));
+  await expect(previewFrame.locator("#game2web-start-overlay")).toBeVisible({ timeout: 30_000 });
+  const previewToken = new URL(preview.url).pathname.split("/").at(-1);
+  const previewGameFrame = page.frames().find((candidate) => candidate.url().includes(`/api/preview/${previewToken}/`));
   expect(previewGameFrame, "temporary preview iframe should be loaded").toBeTruthy();
   if (!previewGameFrame) return;
-  await expect(previewFrame.locator("#game2web-start-overlay")).toBeVisible({ timeout: 30_000 });
   expect(await godotAudioStates(previewGameFrame)).not.toContain("running");
   await previewFrame.getByRole("button", { name: "Play Game" }).click();
   await expect(previewFrame.locator("#game2web-start-overlay")).toBeHidden({ timeout: 30_000 });

@@ -148,21 +148,24 @@ app.post<{ Params: { id: string }; Body: { provider?: ProviderId; mode?: "PRODUC
     const activeStatuses = ["QUEUED", "PREPARING", "VALIDATING", "BUILDING", "PACKAGING", "UPLOADING"] as const;
     const activeBuilds = await tx.build.count({ where: { project: { userId: user.id }, status: { in: [...activeStatuses] } } });
     if (activeBuilds >= Number(process.env.MAX_CONCURRENT_BUILDS_PER_USER ?? 2)) {
-      return { status: 429, error: "Build concurrency limit reached; try again later" } as const;
+      return { error: "Build concurrency limit reached; try again later" } as const;
     }
     const totalActiveBuilds = await tx.build.count({ where: { status: { in: [...activeStatuses] } } });
     if (totalActiveBuilds >= Number(process.env.MAX_CONCURRENT_BUILDS ?? 2)) {
-      return { status: 429, error: "Build capacity is currently full; try again later" } as const;
+      return { error: "Build capacity is currently full; try again later" } as const;
     }
     const filesystem = await statfs(process.env.BUILD_WORKSPACE_ROOT ?? "/tmp");
     const freeMb = (Number(filesystem.bavail) * Number(filesystem.bsize)) / (1024 * 1024);
     if (freeMb < Number(process.env.BUILD_MIN_FREE_DISK_MB ?? 4096)) {
-      return { status: 503, error: "Build capacity is temporarily unavailable" } as const;
+      return { error: "Build capacity is temporarily unavailable" } as const;
     }
     const build = await tx.build.create({ data: { projectId: project.id, provider: report.provider, status: "QUEUED", mode } });
     return { build } as const;
   });
-  if ("error" in admission) return reply.code(admission.status).send({ error: admission.error });
+  if ("error" in admission) {
+    const statusCode = admission.error === "Build capacity is temporarily unavailable" ? 503 : 429;
+    return reply.code(statusCode).send({ error: admission.error });
+  }
   const { build } = admission;
   await queue.add(build.id, {
     buildId: build.id,

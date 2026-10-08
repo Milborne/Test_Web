@@ -172,6 +172,9 @@ while IFS=$'\t' read -r id repository commit branch license_file project_dir cod
           elif ! EXTERNAL_GAME_PREVIEW_URL="$preview_url" npx playwright test "$ROOT/e2e/external-player.spec.ts" --reporter=line; then
             player_status="FAIL"
             errors="external preview Playwright runtime validation failed"
+          elif [ -n "${PAGES_PREVIEW_DIR:-}" ] && ! node "$ROOT/scripts/compatibility/export-pages-artifacts.mjs" "$project_report/build.json" "$player_path" "$PAGES_PREVIEW_DIR"; then
+            player_status="FAIL"
+            errors="GitHub Pages artifact export or integrity validation failed"
           else
             player_status="PASS"
           fi

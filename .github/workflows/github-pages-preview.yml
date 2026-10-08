@@ -1,0 +1,177 @@
+name: Game2Web GitHub Pages Preview
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages-preview
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      DATABASE_URL: postgresql://game2web:game2web@localhost:5432/game2web
+      REDIS_URL: redis://localhost:6379
+      S3_ENDPOINT: http://localhost:9000
+      S3_BUCKET: game2web
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      API_PORT: "4000"
+      APP_ORIGIN: http://127.0.0.1:3000
+      PLAYER_ORIGIN: http://localhost:4000
+      PREVIEW_APP_ORIGIN: http://127.0.0.1:3000
+      PREVIEW_PERSISTENT: "false"
+      PREVIEW_STORAGE_DURABLE: "false"
+      NEXT_PUBLIC_API_URL: http://127.0.0.1:4000
+      NEXT_PUBLIC_PLAYER_ORIGIN: http://localhost:4000
+      COMPATIBILITY_LAB: "true"
+      COMPATIBILITY_PROJECTS: godot-platformer
+      COMPATIBILITY_REQUIRED_PROJECT: godot-platformer
+      PAGES_PREVIEW_DIR: .validation/pages-site
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.11.0
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Unit tests
+        run: npm test
+      - name: Security tests
+        run: npm run security:test
+      - name: Builder image policy
+        run: npm run image-policy
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+      - name: Start infrastructure
+        run: docker compose -f infra/docker-compose.yml up -d --wait
+      - name: Prepare database
+        run: npx prisma db push --schema packages/database/prisma/schema.prisma
+      - name: Build pinned Godot builder
+        run: docker build --file builders/godot-4.4/Dockerfile --tag game2web/godot-builder:4.4.0 .
+      - name: Start API, worker and web
+        run: |
+          mkdir -p .validation
+          npm run dev --workspace apps/api > api.log 2>&1 &
+          echo $! > .validation/api.pid
+          npm run dev --workspace apps/worker > worker.log 2>&1 &
+          echo $! > .validation/worker.pid
+          npm run dev --workspace apps/web > web.log 2>&1 &
+          echo $! > .validation/web.pid
+          for i in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:4000/health && curl --fail --silent http://127.0.0.1:3000; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:4000/health
+          curl --fail --silent http://127.0.0.1:3000 > /dev/null
+      - name: Run real Godot build and validate static artifacts
+        run: npm run compatibility:lab
+      - name: Validate Pages site contents
+        if: success()
+        run: |
+          test -s .validation/pages-site/index.html
+          find .validation/pages-site -type f -name '*.wasm' -print -quit | grep -q .
+          find .validation/pages-site -type f -name '*.js' -print -quit | grep -q .
+          if find .validation/pages-site -type f \( -name '*.zip' -o -name '*.log' -o -name '.env*' \) -print -quit | grep -q .; then
+            echo "Refusing to publish source archives, logs, or environment files"
+            exit 1
+          fi
+      - name: Upload GitHub Pages artifact
+        if: success()
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: .validation/pages-site
+      - name: Collect Compose logs
+        if: always()
+        run: docker compose -f infra/docker-compose.yml logs --no-color > compose.log 2>&1 || true
+      - name: Stop application processes
+        if: always()
+        run: |
+          for file in .validation/api.pid .validation/worker.pid .validation/web.pid; do
+            if [ -s "$file" ]; then
+              pid="$(cat "$file")"
+              if kill -0 "$pid" 2>/dev/null; then kill "$pid"; fi
+            fi
+          done
+      - name: Tear down local infrastructure
+        if: always()
+        run: docker compose -f infra/docker-compose.yml down -v
+      - name: Preserve infrastructure logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: github-pages-preview-build-logs
+          path: |
+            api.log
+            worker.log
+            web.log
+            compose.log
+          if-no-files-found: warn
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - name: Deploy preview artifact
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+      - name: Verify deployment URL
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          test -n "$PAGE_URL" || { echo "PREVIEW_DEPLOYMENT_FAILED: deploy-pages returned no page_url"; exit 1; }
+          node -e 'const u=new URL(process.env.PAGE_URL); if (u.protocol !== "https:" || u.hostname !== "milborne.github.io") throw new Error("Unexpected GitHub Pages URL");'
+          for i in $(seq 1 30); do
+            if curl --fail --silent --show-error "$PAGE_URL" -o /dev/null; then exit 0; fi
+            sleep 10
+          done
+          echo "PREVIEW_DEPLOYMENT_FAILED: GitHub Pages URL did not become reachable"
+          exit 1
+      - name: Record preview URL
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          mkdir -p .validation
+          {
+            echo "Preview URL:"
+            echo "$PAGE_URL"
+            echo "Deployment run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "Created: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "Retention: until the next GitHub Pages deployment or Pages is disabled; no automatic expiry is configured."
+          } | tee .validation/preview-url.txt
+          {
+            echo "## Game2Web Preview deployed"
+            echo
+            echo "**URL:** [$PAGE_URL]($PAGE_URL)"
+            echo
+            echo "The URL comes directly from \`steps.deployment.outputs.page_url\`. GitHub Pages serves this site publicly; it is not an owner-authenticated preview."
+            echo
+            echo "A separate workflow will run browser/runtime checks after this deployment workflow completes."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve preview URL and deployment metadata
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: github-pages-preview-url
+          path: .validation/preview-url.txt
+          if-no-files-found: error

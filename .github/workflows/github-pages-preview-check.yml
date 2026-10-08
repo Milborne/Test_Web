@@ -1,0 +1,65 @@
+name: Game2Web GitHub Pages Preview Check
+
+on:
+  workflow_dispatch:
+    inputs:
+      preview_url:
+        description: "HTTPS URL returned by the GitHub Pages deployment"
+        required: true
+        type: string
+  workflow_run:
+    workflows: ["Game2Web GitHub Pages Preview"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  browser:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.11.0
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+      - name: Download URL from completed deployment run
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: github-pages-preview-url
+          path: .validation
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Save manually supplied preview URL
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          PREVIEW_URL: ${{ inputs.preview_url }}
+        run: |
+          mkdir -p .validation
+          printf 'Preview URL:\n%s\n' "$PREVIEW_URL" > .validation/preview-url.txt
+      - name: Validate preview URL
+        run: |
+          test -s .validation/preview-url.txt
+          preview_url="$(sed -n '2p' .validation/preview-url.txt)"
+          PREVIEW_URL="$preview_url" node -e 'const u=new URL(process.env.PREVIEW_URL); if (u.protocol !== "https:" || u.hostname !== "milborne.github.io") throw new Error("Expected the real HTTPS GitHub Pages URL for this repository");'
+          echo "GITHUB_PAGES_PREVIEW_URL=$preview_url" >> "$GITHUB_ENV"
+      - name: Test deployed Godot runtime in a real browser
+        run: npx playwright test e2e/github-pages-preview.spec.ts --reporter=line
+      - name: Upload browser report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: github-pages-preview-browser-report
+          path: |
+            .validation/playwright-report
+            test-results
+          if-no-files-found: warn
+          include-hidden-files: true

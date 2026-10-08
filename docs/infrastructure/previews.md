@@ -2,6 +2,8 @@
 
 A preview is an owner-authorized technical deployment of a READY `PREVIEW` build. It is separate from production deployments and does not change the project's redistribution status. Production builds still require `REDISTRIBUTION_CLEARED`; a preview is not permission to publish or redistribute third-party content.
 
+For an explicitly public GitHub Pages test that does not use the private preview lifecycle, see [GitHub Pages manual preview](github-pages-preview.md). Pages is public and has no token authorization, CSP control, or automatic expiry.
+
 ## Lifecycle
 
 1. The project owner queues a `PREVIEW` build. The worker validates and stores build artifacts under `private/<projectId>/<buildId>/`.

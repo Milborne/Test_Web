@@ -11,11 +11,14 @@ export default defineConfig({
     ...(channel ? { channel } : {}),
     ...(firefoxWebGL ? {
       launchOptions: {
+        headless: false,
         firefoxUserPrefs: {
           "webgl.disabled": false,
           "webgl.force-enabled": true,
+          "webgl.enable-webgl2": true,
           "webgl.allow-software": true,
           "webgl.disable-fail-if-major-performance-caveat": true,
+          "gfx.webrender.all": true,
           "gfx.webrender.software": true
         }
       }

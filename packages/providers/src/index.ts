@@ -202,9 +202,10 @@ export class GodotProvider implements BuildProvider {
     if (!context.godotExportPreset) throw new Error("Godot Web export was not preflighted; no build was started");
     const builder = context.godotBuilderVersion ? builderForVersion(context.godotBuilderVersion) : undefined;
     if (!builder) throw new Error("No compatible Godot builder is configured; no build was started");
+    const builderUid = typeof process.getuid === "function" && process.getuid() > 0 ? process.getuid() : 1000;
     context.log("Starting isolated Godot Web exporter");
     try {
-      const result = await execFileAsync("docker", ["run", "--rm", "--network=none", "--cap-drop=ALL", "--security-opt", "no-new-privileges:true", "--pids-limit", String(context.limits.maxPids), "--cpus", String(context.limits.maxCpus), "--memory", `${context.limits.maxMemoryMb}m`, "--user", "1000:1000", "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=512m", "-e", `GODOT_EXPORT_PRESET=${context.godotExportPreset}`, "-e", `GODOT_PROJECT_DIRECTORY=${context.godotProjectDirectory ?? ""}`, "-e", `GODOT_GENERATE_WEB_PRESET=${context.generateTemporaryWebPreset ? "1" : "0"}`, "-e", `GODOT_USE_COMPATIBILITY_RENDERER=${context.useCompatibilityRenderer ? "1" : "0"}`, "-v", `${context.sourceDirectory}:/src:ro`, "-v", `${context.outputDirectory}:/out`, builder.image], { timeout: context.limits.maxBuildMinutes * 60_000 });
+      const result = await execFileAsync("docker", ["run", "--rm", "--network=none", "--cap-drop=ALL", "--security-opt", "no-new-privileges:true", "--pids-limit", String(context.limits.maxPids), "--cpus", String(context.limits.maxCpus), "--memory", `${context.limits.maxMemoryMb}m`, "--user", `${builderUid}:1000`, "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=512m", "-e", `GODOT_EXPORT_PRESET=${context.godotExportPreset}`, "-e", `GODOT_PROJECT_DIRECTORY=${context.godotProjectDirectory ?? ""}`, "-e", `GODOT_GENERATE_WEB_PRESET=${context.generateTemporaryWebPreset ? "1" : "0"}`, "-e", `GODOT_USE_COMPATIBILITY_RENDERER=${context.useCompatibilityRenderer ? "1" : "0"}`, "-v", `${context.sourceDirectory}:/src:ro`, "-v", `${context.outputDirectory}:/out`, builder.image], { timeout: context.limits.maxBuildMinutes * 60_000 });
       context.log(result.stdout);
     } catch (error) {
       const output = error as { stdout?: string; stderr?: string };

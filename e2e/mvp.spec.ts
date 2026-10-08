@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import AdmZip from "adm-zip";
 import { PrismaClient } from "@prisma/client";
+import { godotAudioStates, installGodotRuntimeObservers } from "./helpers/godot-runtime-observer";
 
 const api = "http://127.0.0.1:4000";
 const appOrigin = process.env.APP_ORIGIN ?? "http://localhost:3000";
@@ -10,6 +11,7 @@ const playerOrigin = process.env.PLAYER_ORIGIN ?? "http://localhost:4000";
 const prisma = new PrismaClient();
 
 test("Godot upload, build, deployment and player", async ({ page, request, playwright }) => {
+  await installGodotRuntimeObservers(page);
   const browserErrors: string[] = [];
   const wasmResponses: string[] = [];
   const javascriptResponses: string[] = [];
@@ -52,7 +54,16 @@ test("Godot upload, build, deployment and player", async ({ page, request, playw
   await page.goto(`/play/${created.project.slug}`);
   await expect(page.locator("iframe")).toBeVisible();
   const frame = page.frameLocator("iframe");
+  const gameFrame = page.frames().find((candidate) => candidate.url().includes(`/api/play/${created.project.slug}/`));
+  expect(gameFrame, "published Godot iframe should be loaded").toBeTruthy();
+  if (!gameFrame) return;
+  await expect(frame.locator("#game2web-start-overlay")).toBeVisible({ timeout: 30_000 });
+  expect(await godotAudioStates(gameFrame)).not.toContain("running");
+  await frame.getByRole("button", { name: "Play Game" }).press("Enter");
+  await expect(frame.locator("#game2web-start-overlay")).toBeHidden({ timeout: 30_000 });
   await expect(frame.locator("canvas")).toBeVisible({ timeout: 30_000 });
+  await expect.poll(() => godotAudioStates(gameFrame), { timeout: 30_000 }).toContain("running");
+  expect(await gameFrame.evaluate(() => document.activeElement?.id)).toBe("canvas");
 
   const previewBuildResponse = await request.post(`${api}/api/projects/${created.project.id}/builds`, { headers, data: { mode: "PREVIEW" } });
   expect(previewBuildResponse.status()).toBe(202);
@@ -88,7 +99,15 @@ test("Godot upload, build, deployment and player", async ({ page, request, playw
   javascriptResponses.length = 0;
   await page.goto(preview.url);
   const previewFrame = page.frameLocator("iframe");
+  const previewGameFrame = page.frames().find((candidate) => candidate.url().includes(`/api/preview/${new URL(preview.url).pathname.split("/").at(-1)}/`));
+  expect(previewGameFrame, "temporary preview iframe should be loaded").toBeTruthy();
+  if (!previewGameFrame) return;
+  await expect(previewFrame.locator("#game2web-start-overlay")).toBeVisible({ timeout: 30_000 });
+  expect(await godotAudioStates(previewGameFrame)).not.toContain("running");
+  await previewFrame.getByRole("button", { name: "Play Game" }).click();
+  await expect(previewFrame.locator("#game2web-start-overlay")).toBeHidden({ timeout: 30_000 });
   await expect(previewFrame.locator("canvas")).toBeVisible({ timeout: 30_000 });
+  await expect.poll(() => godotAudioStates(previewGameFrame), { timeout: 30_000 }).toContain("running");
   await expect.poll(() => wasmResponses.length, { timeout: 30_000 }).toBeGreaterThan(0);
   await expect.poll(() => javascriptResponses.length, { timeout: 30_000 }).toBeGreaterThan(0);
   expect(browserErrors).toEqual([]);

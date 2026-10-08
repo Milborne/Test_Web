@@ -64,6 +64,9 @@ while IFS=$'\t' read -r id repository commit branch license_file project_dir cod
   started="$(date +%s)"
   project_report="$REPORT_ROOT/$id"
   mkdir -p "$project_report"
+  if [ "$id" = "godot-platformer" ]; then
+    node "$ROOT/scripts/compatibility/audit-godot-input.mjs" "$project_dir" > "$project_report/input-audit.json"
+  fi
   license_text="not-found"
   [ "$license_file" = "not-found" ] || license_text="$(head -1 "$project_dir/$license_file" | tr -d '\r')"
   code_license="${code_license:-$license_text}"

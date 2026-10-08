@@ -75,6 +75,13 @@ jobs:
           curl --fail --silent http://127.0.0.1:3000 > /dev/null
       - name: Run real Godot build and validate static artifacts
         run: npm run compatibility:lab
+      - name: Preserve Platformer input audit
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: github-pages-preview-input-audit
+          path: tests/compatibility/reports/godot-platformer/input-audit.json
+          if-no-files-found: warn
       - name: Validate Pages site contents
         if: success()
         run: |

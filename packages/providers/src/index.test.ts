@@ -1,7 +1,36 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import path from "node:path";
-import { detectProject, extractGodotResourceReferences, GODOT_BUILDER_REGISTRY, preflightGodot, readGodotProjectFiles, selectGodotBuilder } from "./index.js";
+import { addGodotUserGestureAudioGate, detectProject, extractGodotResourceReferences, GODOT_BUILDER_REGISTRY, preflightGodot, readGodotProjectFiles, selectGodotBuilder } from "./index.js";
+
+test("Godot audio bootstrap waits for a user gesture and focuses the game canvas", () => {
+  const source = '<html><head></head><body><canvas id="canvas"></canvas><script src="index.js"></script><script>const engine = new Engine(GODOT_CONFIG); engine.startGame({}).then(() => { setStatusMode(\'hidden\'); }, displayFailureNotice);</script></body></html>';
+  const result = addGodotUserGestureAudioGate(source);
+  assert.match(result, /id="game2web-start-overlay"/);
+  assert.match(result, /id="game2web-start-button" type="button"/);
+  assert.match(result, /role="dialog" aria-modal="true"/);
+  assert.match(result, /game2webStartButton\.addEventListener\('click'/);
+  assert.match(result, /window\.matchMedia\('\(pointer: fine\)'\)/);
+  assert.match(result, /engine\.startGame\(\{\}\)/);
+  assert.match(result, /game2webCanvas\.focus\(\{ preventScroll: true \}\)/);
+  assert.equal(addGodotUserGestureAudioGate(result), result);
+  assert.equal((result.match(/engine\.startGame/g) ?? []).length, 1);
+});
+
+test("Godot audio bootstrap fails closed for an unknown standard shell structure", () => {
+  assert.throws(
+    () => addGodotUserGestureAudioGate('<html><head></head><body><script src="index.js"></script><script>const engine = new Engine(GODOT_CONFIG); engine.startGame();</script></body></html>'),
+    /refusing to publish without the user-gesture audio gate/
+  );
+  assert.throws(
+    () => addGodotUserGestureAudioGate("<html><head></head><body>not a Godot Web shell</body></html>"),
+    /missing the expected Engine startup shell/
+  );
+  assert.throws(
+    () => addGodotUserGestureAudioGate('<html><body><section id="game2web-start-overlay"></section><script>engine.startGame({}).then(() => {}, displayFailureNotice);</script></body></html>'),
+    /conflicting start overlay/
+  );
+});
 
 test("detects the Godot demo deterministically", () => {
   const result = detectProject([{ path: "project.godot", size: 400 }, { path: "scenes/main.tscn", size: 1200 }]);

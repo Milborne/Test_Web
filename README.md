@@ -16,7 +16,7 @@ The repository now contains the first executable slice:
 
 The development API persists projects and source archives through PostgreSQL and MinIO. A build is only marked ready after a worker reports a successful toolchain execution and the artifacts have been validated and persisted; there are no simulated successful builds.
 
-**Official status:** `IMPLEMENTATION COMPLETE; RUNTIME VALIDATION PENDING`. The repository includes a GitHub Actions validation harness for the full `PROJECT -> BUILD -> DEPLOY -> PLAY` pass. This status must not change to validated until CI records a complete successful run.
+**Official status:** `MULTI-ENGINE MVP VALIDATED` for the pinned Godot and Emscripten/SDL fixtures. External-project compatibility remains an opt-in lab measurement and is not part of normal product CI.
 
 ## Milestone 1 validation
 
@@ -84,4 +84,16 @@ bash scripts/check-env.sh
 bash scripts/validate-mvp.sh
 ```
 
-This repository currently has no `package-lock.json`, so CI uses `npm install` rather than falsely using `npm ci`. The official status remains `IMPLEMENTATION COMPLETE; RUNTIME VALIDATION PENDING` until a complete GitHub Actions run reports `MVP END-TO-END VALIDATED`.
+This repository currently has no `package-lock.json`, so CI uses `npm install` rather than falsely using `npm ci`. The external lab remains separate from the validated pinned-fixture MVP.
+
+## Compatibility Lab
+
+The developer-only Compatibility Lab tests the five external Godot repositories listed in `tests/compatibility/external-projects.yml`. It clones them into a temporary workspace, records the exact commit and license evidence, and sends an archive through the existing upload, worker, artifact, deployment, and player path. Third-party source is never committed or copied into `examples/`.
+
+Start an isolated development stack, then run:
+
+```bash
+COMPATIBILITY_LAB=true npm run compatibility:lab
+```
+
+The manual workflow `.github/workflows/compatibility-lab.yml` runs the same lab on GitHub Actions and uploads `tests/compatibility/reports/`. It is intentionally separate from normal product CI because it depends on external repositories. Results are classified deterministically as `SUPPORTED`, `SUPPORTED_WITH_WARNINGS`, `REQUIRES_ADAPTATION`, `UNSUPPORTED`, `BUILD_FAILED`, or `PLAYER_FAILED`.

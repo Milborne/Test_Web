@@ -1,0 +1,8 @@
+config_version=5
+config/features=PackedStringArray("4.4", "GL Compatibility")
+
+[application]
+run/main_scene="res://main.tscn"
+
+[rendering]
+renderer/rendering_method="gl_compatibility"

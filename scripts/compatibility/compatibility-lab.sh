@@ -57,8 +57,6 @@ while IFS=$'\t' read -r id repository commit branch license_file project_dir; do
   started="$(date +%s)"
   project_report="$REPORT_ROOT/$id"
   mkdir -p "$project_report"
-  version="$(grep -Eo 'config/features=["'\''][^"'\'']*' "$project_dir/project.godot" 2>/dev/null | head -1 | sed -E 's/.*(4\.[0-9]+|3\.[0-9]+).*/\1/' || true)"
-  [ -n "$version" ] || version="unknown"
   license_text="not-found"
   [ -n "$license_file" ] && license_text="$(head -1 "$project_dir/$license_file" | tr -d '\r' || true)"
   printf '%s\n' "| $id | $repository | \`$commit\` | $license_text | See upstream | Not published automatically |" >> "$LICENSES"
@@ -70,6 +68,15 @@ while IFS=$'\t' read -r id repository commit branch license_file project_dir; do
   project_id="$(printf '%s' "$response" | json_field project id || true)"
   provider="$(printf '%s' "$response" | json_field compatibility provider || true)"
   compatible="$(printf '%s' "$response" | json_field compatibility compatible || true)"
+  preflight_status="$(printf '%s' "$response" | json_field compatibility preflight status || true)"
+  preflight_ms="$(printf '%s' "$response" | json_field compatibility preflight durationMs || true)"
+  version="$(printf '%s' "$response" | json_field compatibility preflight engineVersion raw || true)"
+  builder_version="$(printf '%s' "$response" | json_field compatibility preflight builderVersion || true)"
+  web_export_status="$(printf '%s' "$response" | json_field compatibility preflight webExportStatus || true)"
+  [ -n "$version" ] || version="unknown"
+  [ -n "$preflight_ms" ] || preflight_ms="0"
+  [ -n "$builder_version" ] || builder_version="n/a"
+  [ -n "$web_export_status" ] || web_export_status="n/a"
   build_status="NOT_RUN"
   artifacts_status="NOT_RUN"
   player_status="NOT_RUN"
@@ -77,9 +84,9 @@ while IFS=$'\t' read -r id repository commit branch license_file project_dir; do
   warnings=""
   errors=""
 
-  if [ "$provider" = "godot" ] && [[ "$version" == 3.* ]]; then
-    result="UNSUPPORTED"
-    warnings="Godot 3.x is outside the pinned Godot 4 builder compatibility range"
+  if [ "$provider" = "godot" ] && { [ "$preflight_status" = "UNSUPPORTED" ] || [ "$preflight_status" = "REQUIRES_ADAPTATION" ]; }; then
+    result="$preflight_status"
+    errors="$(printf '%s' "$response" | json_field compatibility preflight errors || true)"
   elif [ "$provider" = "godot" ] && [ "$compatible" = "true" ]; then
     build_response="$(curl --fail --silent --show-error -b "$cookie" -H "x-csrf-token: $csrf" \
       -H 'content-type: application/json' -d '{}' "$API_URL/api/projects/$project_id/builds" || true)"
@@ -138,12 +145,16 @@ while IFS=$'\t' read -r id repository commit branch license_file project_dir; do
     artifacts: $artifacts_status
     player: $player_status
     duration_seconds: $duration
+    preflight_status: ${preflight_status:-NOT_AVAILABLE}
+    preflight_duration_ms: $preflight_ms
+    builder_version: "$builder_version"
+    web_export_status: $web_export_status
     warnings: ["${warnings//\"/\\\"}"]
     errors: ["${errors//\"/\\\"}"]
 EOF
   {
     printf '\n%s\n' "$id"
-    printf '  Godot: %s\n  Build: %s\n  Artifacts: %s\n  Player: %s\n  Result: %s\n' "$version" "$build_status" "$artifacts_status" "$player_status" "$result"
+    printf '  Godot: %s\n  Preflight: %s (%sms)\n  Builder: %s\n  Web export: %s\n  Build: %s\n  Artifacts: %s\n  Player: %s\n  Result: %s\n' "$version" "$preflight_status" "$preflight_ms" "$builder_version" "$web_export_status" "$build_status" "$artifacts_status" "$player_status" "$result"
   } | tee -a "$REPORT_ROOT/summary.txt"
 done < "$METADATA"
 

@@ -1,7 +1,7 @@
 import { Worker } from "bullmq";
 import { PrismaClient } from "@prisma/client";
 import AdmZip from "adm-zip";
-import { providers, validateArtifacts } from "@game2web/providers";
+import { providers, readGodotProjectFiles, validateArtifacts } from "@game2web/providers";
 import type { BuildContext, ProviderId } from "@game2web/shared";
 import { getObject, putObject } from "@game2web/storage";
 import { createDeploymentProvider } from "@game2web/deployment";
@@ -62,10 +62,26 @@ new Worker("game-builds", async (job) => {
       await writeFile(target, entry.getData(), { mode: 0o644 });
     }
     await update(buildId, "VALIDATING", "Validating deterministic provider compatibility");
+    const godotPreflight = providerId === "godot" ? await providers.godot.validate(await readGodotProjectFiles(sourceDirectory)) : undefined;
+    if (godotPreflight && !godotPreflight.compatible) {
+      const message = godotPreflight.preflight?.errors.join(" ") || "Godot compatibility preflight rejected this project";
+      await addLog(buildId, `Godot preflight rejected build: ${message}`);
+      throw new Error(message);
+    }
+    if (godotPreflight?.preflight) {
+      await addLog(buildId, `Godot preflight ${godotPreflight.preflight.status} in ${godotPreflight.preflight.durationMs}ms`);
+    }
     await update(buildId, "BUILDING", providerId === "emscripten-sdl"
       ? "Provider: emscripten-sdl; Toolchain: Emscripten 3.1.74; SDL: Emscripten SDL2"
       : `Running ${providerId} builder`);
-    const context: BuildContext = { sourceDirectory, outputDirectory, limits, log: (message) => void addLog(buildId, message) };
+    const context: BuildContext = {
+      sourceDirectory,
+      outputDirectory,
+      limits,
+      ...(godotPreflight?.preflight?.webExportPreset ? { godotExportPreset: godotPreflight.preflight.webExportPreset } : {}),
+      ...(godotPreflight?.preflight?.projectDirectory !== undefined ? { godotProjectDirectory: godotPreflight.preflight.projectDirectory } : {}),
+      log: (message) => void addLog(buildId, message)
+    };
     await provider.build(context);
     await update(buildId, "PACKAGING", "Collecting and validating generated artifacts");
     const paths = await provider.collectArtifacts(outputDirectory);

@@ -5,7 +5,7 @@ import { Queue } from "bullmq";
 import { PrismaClient } from "@prisma/client";
 import AdmZip from "adm-zip";
 import { randomUUID } from "node:crypto";
-import { detectProject, providers } from "@game2web/providers";
+import { detectProject, isGodotPreflightTextFile, providers } from "@game2web/providers";
 import type { ProjectFile, ProviderId } from "@game2web/shared";
 import { ensureBucket, getObject, putObject } from "@game2web/storage";
 import { createSession, hashPassword, logout, requireUser, validEmail, validPassword, verifyPassword } from "./auth.js";
@@ -107,7 +107,8 @@ app.post("/api/projects", async (request, reply) => {
     return reply.code(422).send({ error: error instanceof Error ? error.message : "Invalid source archive" });
   }
   if (files.length === 0 || files.length > limits.maxFiles) return reply.code(422).send({ error: "source archive has no files or exceeds file count limit" });
-  const report = detectProject(files);
+  const detected = detectProject(files);
+  const report = detected.provider ? await providers[detected.provider].validate(files) : detected;
   const project = await prisma.project.create({ data: { name: name.trim(), slug: `${slugify(name)}-${randomUUID().slice(0, 8)}`, description, userId: user.id } });
   const stored = await putObject(`sources/${project.id}/source.zip`, archive, "application/zip");
   await prisma.projectFile.createMany({ data: files.map((file) => ({ projectId: project.id, path: file.path, originalFilename, size: file.size, storageKey: stored.key, checksum: stored.checksum })) });
@@ -119,20 +120,35 @@ app.post<{ Params: { id: string }; Body: { provider?: ProviderId } }>("/api/proj
   if (!user) return;
   const project = await prisma.project.findFirst({ where: { id: request.params.id, userId: user.id }, include: { files: true } });
   if (!project) return reply.code(404).send({ error: "Project not found" });
+  const sourceStorageKey = project.files[0]?.storageKey;
+  if (!sourceStorageKey || project.files.some((file) => file.storageKey !== sourceStorageKey)) return reply.code(422).send({ error: "Project source archive binding is invalid" });
+  const sourceArchive = await getObject(sourceStorageKey);
+  const files = archiveEntries(sourceArchive.body);
+  const detected = detectProject(files, request.body?.provider);
+  const report = detected.provider ? await providers[detected.provider].validate(files) : detected;
+  if (!report.compatible || !report.provider) {
+    return reply.code(422).send({
+      error: report.preflight?.errors.join(" ") || "Project is not compatible with an available provider",
+      compatibility: report
+    });
+  }
   const activeBuilds = await prisma.build.count({ where: { project: { userId: user.id }, status: { in: ["QUEUED", "PREPARING", "VALIDATING", "BUILDING", "PACKAGING", "UPLOADING"] } } });
   if (activeBuilds >= Number(process.env.MAX_CONCURRENT_BUILDS_PER_USER ?? 2)) return reply.code(429).send({ error: "Build concurrency limit reached; try again later" });
   const totalActiveBuilds = await prisma.build.count({ where: { status: { in: ["QUEUED", "PREPARING", "VALIDATING", "BUILDING", "PACKAGING", "UPLOADING"] } } });
   if (totalActiveBuilds >= Number(process.env.MAX_CONCURRENT_BUILDS ?? 2)) return reply.code(429).send({ error: "Build capacity is currently full; try again later" });
-  const report = detectProject(project.files.map((file) => ({ path: file.path, size: Number(file.size) })), request.body?.provider);
-  if (!report.compatible || !report.provider) return reply.code(422).send({ error: "Project is not compatible with an available provider", compatibility: report });
   const filesystem = await statfs(process.env.BUILD_WORKSPACE_ROOT ?? "/tmp");
   const freeMb = (Number(filesystem.bavail) * Number(filesystem.bsize)) / (1024 * 1024);
   if (freeMb < Number(process.env.BUILD_MIN_FREE_DISK_MB ?? 4096)) return reply.code(503).send({ error: "Build capacity is temporarily unavailable" });
-  const sourceStorageKey = project.files[0]?.storageKey;
-  if (!sourceStorageKey) return reply.code(422).send({ error: "Project has no persisted source archive" });
   const build = await prisma.build.create({ data: { projectId: project.id, provider: report.provider, status: "QUEUED" } });
-  await queue.add(build.id, { buildId: build.id, projectId: project.id, provider: report.provider, sourceStorageKey }, { jobId: build.id, removeOnComplete: 100, removeOnFail: 100 });
-  return reply.code(202).send({ id: build.id, projectId: project.id, provider: report.provider, status: build.status });
+  await queue.add(build.id, {
+    buildId: build.id,
+    projectId: project.id,
+    provider: report.provider,
+    sourceStorageKey,
+    godotExportPreset: report.preflight?.webExportPreset,
+    godotProjectDirectory: report.preflight?.projectDirectory
+  }, { jobId: build.id, removeOnComplete: 100, removeOnFail: 100 });
+  return reply.code(202).send({ id: build.id, projectId: project.id, provider: report.provider, status: build.status, preflight: report.preflight });
 });
 app.get<{ Params: { id: string } }>("/api/builds/:id", async (request, reply) => {
   const user = await requireUser(request, reply);
@@ -161,6 +177,7 @@ function archiveEntries(buffer: Buffer): ProjectFile[] {
   const entries = zip.getEntries();
   if (entries.length > limits.maxFiles) throw new Error("source archive exceeds file count limit");
   let expandedBytes = 0;
+  let preflightTextBytes = 0;
   return entries.filter((entry) => !entry.isDirectory).map((entry) => {
     const normalized = entry.entryName.replaceAll("\\", "/");
     const segments = normalized.split("/");
@@ -168,7 +185,12 @@ function archiveEntries(buffer: Buffer): ProjectFile[] {
     if (!normalized || normalized.startsWith("/") || normalized.includes("\0") || segments.some((segment) => segment === "..") || (mode & 0xf000) === 0xa000) throw new Error(`Unsafe source path: ${entry.entryName}`);
     expandedBytes += entry.header.size;
     if (expandedBytes > limits.maxExpandedBytes || (entry.header.compressedSize > 0 && entry.header.size / entry.header.compressedSize > limits.maxCompressionRatio)) throw new Error("source archive exceeds expansion safety limits");
-    return { path: normalized, size: entry.header.size };
+    const file: ProjectFile = { path: normalized, size: entry.header.size };
+    if (isGodotPreflightTextFile(normalized) && entry.header.size <= 1024 * 1024 && preflightTextBytes + entry.header.size <= 16 * 1024 * 1024) {
+      file.content = entry.getData().toString("utf8");
+      preflightTextBytes += entry.header.size;
+    }
+    return file;
   });
 }
 function slugify(value: string) { return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "game"; }

@@ -44,6 +44,27 @@ test("Godot upload, build, deployment and player", async ({ page, request }) => 
   await expect(frame.locator("canvas")).toBeVisible({ timeout: 30_000 });
 });
 
+test("Godot preflight rejects unsupported projects before queueing a build", async ({ request }) => {
+  const auth = await request.post(`${api}/api/auth/register`, { data: { email: `preflight-${Date.now()}@example.test`, password: "correct horse battery" } });
+  expect(auth.ok()).toBeTruthy();
+  const csrf = auth.headers()["set-cookie"].match(/game2web_csrf=([^;]+)/)?.[1] ?? "";
+  const archive = new AdmZip();
+  archive.addLocalFolder("tests/fixtures/godot-preflight/godot-3");
+  const uploaded = await request.post(`${api}/api/projects`, {
+    headers: { "x-csrf-token": csrf },
+    multipart: { name: "godot-3-fixture", archive: { name: "godot-3.zip", mimeType: "application/zip", buffer: archive.toBuffer() } }
+  });
+  expect(uploaded.ok()).toBeTruthy();
+  const project = await uploaded.json();
+  expect(project.compatibility.preflight.status).toBe("UNSUPPORTED");
+  expect(project.compatibility.preflight.engineVersion.major).toBe(3);
+  const build = await request.post(`${api}/api/projects/${project.project.id}/builds`, { headers: { "x-csrf-token": csrf }, data: {} });
+  expect(build.status()).toBe(422);
+  const rejected = await build.json();
+  expect(rejected.compatibility.preflight.status).toBe("UNSUPPORTED");
+  expect(rejected.error).toContain("supports Godot 4.x");
+});
+
 test("SDL upload, Emscripten build, deployment and player", async ({ page, playwright }) => {
   const request = await playwright.request.newContext();
   const runtimeErrors: string[] = [];
